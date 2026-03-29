@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ccm-orchestra"
+version = "0.1.0"
+description = "Interactive Claude Code session orchestration for Codex via tmux and kitty."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "lexicalmathical" }]
+license = { text = "Proprietary" }
+dependencies = []
+
+[project.scripts]
+ccm = "claude_coop_manager:main"
+codex-heartbeat = "codex_heartbeat:main"
+
+[tool.setuptools]
+py-modules = ["claude_coop_manager", "codex_heartbeat"]
+
+[tool.setuptools.package-dir]
+"" = "."
