@@ -2,9 +2,9 @@
 
 [中文说明](./README.zh-CN.md)
 
-`ccm-orchestra` turns interactive Claude Code sessions into infrastructure instead of ceremony.
+`ccm-orchestra` is a small control plane for running interactive Claude Code helpers in `tmux` and, when needed, coordinating visible tabs in `kitty`.
 
-It gives Codex a practical control plane for running real Claude sessions in the background, steering them through `tmux`, surfacing their transcript incrementally, and reopening them in `kitty` only when humans actually need to look. The result is simple: fewer dead-end terminal rituals, more usable parallel agent work.
+The point is practical: keep the real Claude session persistent and reusable in the background, read its transcript incrementally, and only bring it into a visible terminal when that is actually useful.
 
 ## The Two Layers
 
@@ -18,32 +18,37 @@ If you remember only one thing, remember this:
 - everyday work happens in the `tmux` layer: `start -> send -> read`
 - `kitty` is optional, mostly for observation and visible coordination
 
+The wakeup model is different across the two layers:
+
+- `tmux` layer is poll-based. `ccm read --wait-seconds ...` keeps checking Claude transcript output.
+- `kitty` layer is push-based. `ccm relay` injects a message into another visible tab so that peer can wake up and answer later.
+
+Do not mix those up. Waiting on `read` will not wake another agent tab for you.
+
 ## Why This Exists
 
 Most "multi-agent" workflows fall apart in exactly the same places:
 
-- the LLM session is not persistent
-- state gets mixed across projects
+- helper state gets mixed across projects
 - terminal automation is brittle
-- the "helper" is just a wrapper around non-interactive mode
+- visible coordination and background waiting get conflated
+- the workflow quietly drifts toward non-interactive automation even when you do not want that
 - supervision becomes theater instead of real operations
 
 `ccm-orchestra` is built to avoid that trap. It keeps Claude interactive, keeps sessions isolated by working directory, and gives Codex enough leverage to supervise, reuse, and clean up those sessions like a real toolchain.
 
 ## Why Interactive Claude In `tmux` Instead of `claude -p`
 
-This project intentionally prefers normal interactive Claude Code sessions over non-interactive print mode.
+The main reason is operational, not philosophical.
 
-Why:
+This project intentionally keeps its canonical path on normal interactive Claude Code sessions and avoids building the workflow around non-interactive print mode. The goal is to stay away from usage patterns that look like scripted non-interactive automation and may be more likely to trigger account risk controls.
 
-- interactive sessions are persistent, so a helper can keep context across turns
-- interactive sessions produce real transcript history that `ccm read` can follow incrementally
-- `tmux` gives a stable process boundary for reuse, inspection, restart, and cleanup
-- operationally, we want to avoid building the workflow around non-interactive automation patterns that can look like bulk scripted usage and may be more likely to trigger account risk controls
+That does not mean `claude -p` cannot carry context. That is not the claim here.
 
-So the rule is simple:
+The actual rule is:
 
-- use interactive Claude in `tmux` as the canonical path
+- the canonical path is interactive Claude in `tmux`
+- `tmux` then gives us the process boundary we want for reuse, transcript reading, inspection, restart, and cleanup
 - do not build the main workflow around `claude -p`
 
 ## Features
@@ -171,6 +176,11 @@ ccm relay "feat/main-thread-for-member" "Use Claude to review the UI and report 
 ```
 
 `ccm tabs` now shows the peer tab title together with its resolved worktree, git branch, and helper identity. `ccm relay` wraps the message with a default envelope and a `reply-via` hint so a newcomer can answer without learning extra ceremony.
+
+This is also the wakeup-safe path for agents in visible tabs:
+
+- use `ccm read` when waiting on Claude helper output from the `tmux` layer
+- use `ccm relay` when another visible tab needs to wake up and reply
 
 ### Keep the supervising Codex tab alive
 

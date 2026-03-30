@@ -2,9 +2,9 @@
 
 [English](./README.md)
 
-`ccm-orchestra` 的目标不是把 Claude Code 包成花哨玩具，而是把它变成 Codex 真能调度、监督、复用的基础设施。
+`ccm-orchestra` 是一个很小的控制层，用来在 `tmux` 里运行交互式 Claude Code helper，并在需要时通过 `kitty` 做可见协作。
 
-它让 Codex 可以在后台启动并维持真实的交互式 Claude 会话，用 `tmux` 保持持续 Session，用 transcript 增量读取获取新消息，用 `kitty` 在需要时再把会话拉回前台。少一点表演式“多智能体”，多一点可运维、可复查、可复用的真实协作。
+目标很实际：把真实 Claude 会话稳定地放在后台复用，用 transcript 增量读取拿到新消息，只有在真的有必要的时候才把会话拉到可见终端里。
 
 ## 两层结构
 
@@ -18,32 +18,37 @@
 - 日常工作发生在 `tmux` 层：`start -> send -> read`
 - `kitty` 不是必需层，主要用于观察和可见协作
 
+这两层的唤醒模型也不一样：
+
+- `tmux` 层是 poll 模式。`ccm read --wait-seconds ...` 会不断轮询 Claude transcript。
+- `kitty` 层是 push 模式。`ccm relay` 会把消息主动注入另一个可见 tab，让对方之后醒来并回复。
+
+不要把这两者混为一谈。等 `read` 不会替你唤醒另一个 agent tab。
+
 ## 为什么做这个
 
 很多所谓多智能体流程最后都死在同样的地方：
 
-- Session 不持续
-- 不同项目的状态互相污染
+- helper 状态在不同项目之间互相污染
 - 终端自动化非常脆弱
-- 所谓 helper 其实只是非交互模式套壳
+- 可见协作和后台等待被混成一团
+- 工作流慢慢滑向你本来就不想依赖的非交互自动化
 - 监督行为流于形式
 
 `ccm-orchestra` 就是为了解决这些常见死法。它坚持使用正常交互式 Claude，会按工作目录隔离状态，并给 Codex 足够的控制能力去真正管理这些会话。
 
 ## 为什么用 `tmux` 跑交互式 Claude，而不是 `claude -p`
 
-这个项目有意把“正常交互式 Claude Code”作为主路径，而不是把系统建立在非交互 print mode 上。
+主因是运维层面的，不是哲学层面的。
 
-原因很直接：
+这个项目有意把“正常交互式 Claude Code”作为 canonical path，而不是把系统建立在非交互 print mode 上。目的就是尽量远离那种看起来像脚本化非交互调用的使用模式，因为那种模式更容易靠近账号风控边界。
 
-- 交互式 session 是持续的，helper 可以跨多轮保留上下文
-- 交互式 session 会产出真实 transcript，`ccm read` 才能增量读取
-- `tmux` 给了我们稳定的进程边界，方便复用、检查、重启和清理
-- 从运维角度看，我们不希望主流程建立在看起来像大规模脚本化调用的非交互模式上；这种模式更容易接近账号风控边界
+这并不是在声称 `claude -p` 不能携带上下文。这里不做这个论断。
 
-所以规则很简单：
+真正的规则是：
 
 - canonical path 是在 `tmux` 里跑交互式 Claude
+- `tmux` 再给我们提供想要的进程边界，方便复用、读 transcript、检查、重启和清理
 - 不要把主工作流建立在 `claude -p` 上
 
 ## 功能特性
@@ -171,6 +176,11 @@ ccm relay "feat/main-thread-for-member" "Use Claude to review the UI and report 
 ```
 
 `ccm tabs` 现在会直接显示 peer 的 worktree、git branch 和 helper 身份。`ccm relay` 会自动包上一层默认 envelope 和 `reply-via` 提示，新人不需要自己记住上下文格式。
+
+这也是 visible tab 里最安全的唤醒路径：
+
+- 等 `tmux` helper 输出时，用 `ccm read`
+- 需要另一个可见 tab 之后醒来并回复时，用 `ccm relay`
 
 ### 保持监督用的 Codex tab 存活
 

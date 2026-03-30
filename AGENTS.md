@@ -1,6 +1,6 @@
 # CCM Orchestra Agent Notes
 
-Use `ccm` when you want a persistent interactive Claude Code session instead of `claude --print`.
+Use `ccm` when you want the canonical interactive Claude Code path instead of building around `claude --print`.
 
 This system has two layers:
 
@@ -38,6 +38,7 @@ ccm doctor --cwd "$PWD"
 - Always pass `--cwd "$PWD"` unless you intentionally want another namespace.
 - Prefer `ccm read` over scraping terminal text.
 - Prefer `ccm relay` over `ccm tell` when coordinating with another visible tab. `relay` auto-includes sender context and a reply hint.
-- Use normal interactive Claude only. Do not switch back to `claude --print`.
+- Remember the wakeup model: `ccm read` is poll-based tmux waiting; `ccm relay` is push-based kitty messaging. Polling Claude output will not wake another agent tab.
+- Use normal interactive Claude only. The main reason is to avoid drifting into non-interactive automation patterns that may be riskier for the account.
 - `open` is not part of the everyday loop. Use it only for debugging, live observation, or deliberate visible-tab collaboration.
 - If a session crashed or `kill` was interrupted, run `ccm cleanup --cwd "$PWD"`.

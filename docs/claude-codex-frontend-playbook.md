@@ -11,6 +11,13 @@ Treat the system as two layers:
 
 Most frontend work should stay in the `tmux` layer and use `ccm read` instead of staring at a live terminal.
 
+The wakeup model matters:
+
+- `ccm read` is poll-based waiting on the helper transcript
+- `ccm relay` is push-based messaging into another visible tab
+
+If you need another agent to wake up and reply later, do not sit on `read` and hope. Use `relay`.
+
 ## Tooling
 
 - Claude session manager: `ccm`
@@ -20,7 +27,7 @@ Most frontend work should stay in the `tmux` layer and use `ccm read` instead of
 ## Rules
 
 - Use interactive Claude only. Do not use Claude `--print`.
-- The reason is practical: we want persistent sessions, real transcript history, and a workflow that does not depend on non-interactive automation patterns.
+- The main reason is operational: keep the workflow away from non-interactive automation patterns that may be more likely to trigger account risk controls. The tmux layer then gives us the process boundary and transcript flow we want.
 - Keep Claude scoped to your current worktree and your current branch goal.
 - Treat Claude as a frontend reviewer and alternative-implementation generator, not as the owner of the whole branch.
 - Iterate. One prompt is not enough.
