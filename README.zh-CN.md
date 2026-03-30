@@ -124,6 +124,18 @@ ccm inspect frontend-helper --cwd "$PWD"
 
 它会打印 state path、tmux session、已解析的 transcript path、transcript search roots，以及最近一段 pane tail。
 
+如果你要看未经渲染的 transcript 原始事件，用来调试更底层的 Claude / MCP / tool trace：
+
+```bash
+ccm read frontend-helper --raw --json --cwd "$PWD"
+```
+
+如果你要一次看到所有已保存 namespace 里的 session，而不是只看当前目录：
+
+```bash
+ccm list --all-scopes --json
+```
+
 ### 保持一个长期的 Claude 搭档
 
 - 每个可见的 Codex tab 都应该在 tmux 里维护一个长期存活、值得信任的专属 Claude helper，反复复用。不要每做完一件小事就 kill 掉 helper。持久 session 本身就是核心价值。

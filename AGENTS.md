@@ -62,9 +62,11 @@ If the user wants actual phone WeChat messaging, use the commands above. `ccm we
 
 ```bash
 ccm list --cwd "$PWD"
+ccm list --all-scopes --json
 ccm cleanup --cwd "$PWD"
 ccm doctor --cwd "$PWD"
 ccm inspect frontend-helper --cwd "$PWD"
+ccm read frontend-helper --raw --json --cwd "$PWD"
 ```
 
 ## Rules
@@ -73,6 +75,8 @@ ccm inspect frontend-helper --cwd "$PWD"
 - Pick helper names by job and keep them specific. Avoid colliding with helper names that already exist in the current namespace.
 - Prefer `ccm read` over scraping terminal text.
 - If `ccm read` is empty or transcript resolution lags, run `ccm inspect <helper> --cwd "$PWD"` before guessing. It shows transcript search roots and recent pane tail.
+- Use `ccm read --raw --json` when you need unrendered transcript events for MCP/tool-trace debugging.
+- Use `ccm list --all-scopes --json` when the session you want may live in another saved namespace.
 - Prefer `ccm relay` over `ccm tell` when coordinating with another visible tab. `relay` auto-includes sender context and a reply hint.
 - Remember the wakeup model: `ccm read` is poll-based tmux waiting; `ccm relay` is push-based kitty messaging. Polling Claude output will not wake another agent tab.
 - Use normal interactive Claude only. The main reason is to avoid drifting into non-interactive automation patterns that may be riskier for the account.

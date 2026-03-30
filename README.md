@@ -124,6 +124,18 @@ ccm inspect frontend-helper --cwd "$PWD"
 
 That prints the state path, tmux session, resolved transcript path, transcript search roots, and a recent pane tail.
 
+If you need the unrendered transcript stream for advanced Claude behavior, MCP traces, or tool debugging:
+
+```bash
+ccm read frontend-helper --raw --json --cwd "$PWD"
+```
+
+If you need to discover forgotten sessions across every saved namespace instead of only the current one:
+
+```bash
+ccm list --all-scopes --json
+```
+
 ### Keep a long-lived Claude partner
 
 - Each visible Codex tab should usually keep one dedicated, trusted Claude helper in tmux and reuse it over time. Do not kill the helper after every small task. The persistent session is the point.

@@ -266,6 +266,84 @@ class NamespaceTests(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertEqual(first.name, "state.json")
 
+    def test_discover_state_paths_finds_namespace_state_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / "aa11" / "state.json").parent.mkdir(parents=True)
+            (home / "aa11" / "state.json").write_text("{}")
+            (home / "bb22" / "state.json").parent.mkdir(parents=True)
+            (home / "bb22" / "state.json").write_text("{}")
+            (home / "wechat-transport.json").write_text("{}")
+
+            paths = ccm.discover_state_paths(home)
+
+        self.assertEqual(paths, [home / "aa11" / "state.json", home / "bb22" / "state.json"])
+
+    def test_list_sessions_all_scopes_flattens_namespace_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            first_path = home / "aa11" / "state.json"
+            second_path = home / "bb22" / "state.json"
+            first_path.parent.mkdir(parents=True)
+            second_path.parent.mkdir(parents=True)
+            first_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "sessions": {
+                            "frontend-helper": {
+                                "name": "frontend-helper",
+                                "tmux_session": "ccm-frontend-helper-aa11",
+                                "display_name": "frontend-helper",
+                                "cwd": "/work/a",
+                                "started_at": 1.0,
+                            }
+                        },
+                    }
+                )
+            )
+            second_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "sessions": {
+                            "docs-editor": {
+                                "name": "docs-editor",
+                                "tmux_session": "ccm-docs-editor-bb22",
+                                "display_name": "docs-editor",
+                                "cwd": "/work/b",
+                                "started_at": 2.0,
+                            }
+                        },
+                    }
+                )
+            )
+
+            with mock.patch("claude_coop_manager.session_status", side_effect=["running", "dead"]):
+                payload = ccm.list_sessions_all_scopes(home)
+
+        self.assertEqual(
+            payload,
+            [
+                {
+                    "name": "frontend-helper",
+                    "tmux_session": "ccm-frontend-helper-aa11",
+                    "cwd": "/work/a",
+                    "status": "running",
+                    "transcript": "-",
+                    "state_path": str(first_path),
+                },
+                {
+                    "name": "docs-editor",
+                    "tmux_session": "ccm-docs-editor-bb22",
+                    "cwd": "/work/b",
+                    "status": "dead",
+                    "transcript": "-",
+                    "state_path": str(second_path),
+                },
+            ],
+        )
+
 
 class MainDispatchTests(unittest.TestCase):
     @mock.patch("claude_coop_manager.emit_list", autospec=True)
@@ -300,6 +378,19 @@ class MainDispatchTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         emit.assert_called_once()
+
+    @mock.patch("claude_coop_manager.emit", autospec=True)
+    @mock.patch("claude_coop_manager.list_sessions_all_scopes", autospec=True)
+    @mock.patch("claude_coop_manager.load_state", autospec=True)
+    def test_main_can_list_all_scopes(self, load_state, list_sessions_all_scopes, emit):
+        load_state.return_value = ccm.State()
+        list_sessions_all_scopes.return_value = [{"name": "frontend-helper"}]
+
+        exit_code = ccm.main(["list", "--all-scopes", "--json"])
+
+        self.assertEqual(exit_code, 0)
+        list_sessions_all_scopes.assert_called_once_with(ccm.DEFAULT_HOME_ROOT)
+        emit.assert_called_once_with([{"name": "frontend-helper"}], as_json=True)
 
 
 class ParserHelpTests(unittest.TestCase):
@@ -354,6 +445,14 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("does not push a", help_text)
         self.assertIn("wakeup into another agent tab", help_text)
         self.assertIn("use 'relay'", help_text)
+        self.assertIn("--raw", help_text)
+
+    def test_list_help_mentions_all_scopes(self):
+        parser = ccm.build_parser()
+        list_parser = parser._subparsers._group_actions[0].choices["list"]
+        help_text = list_parser.format_help()
+
+        self.assertIn("--all-scopes", help_text)
 
     def test_guide_help_mentions_agent_playbook(self):
         parser = ccm.build_parser()
@@ -1703,6 +1802,35 @@ class ReadWaitTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ccm.CCMError, "Transcript search roots: /tmp/cac/projects, /tmp/fallback/projects"):
             ccm.read_updates(state, "frontend-helper", wait_seconds=0, poll_interval=1)
+
+    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
+    @mock.patch("claude_coop_manager.read_incremental_jsonl", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_transcript", autospec=True)
+    def test_read_updates_raw_returns_unrendered_events(self, resolve_transcript, read_incremental_jsonl, _sleep):
+        transcript = Path("/tmp/transcript.jsonl")
+        resolve_transcript.return_value = transcript
+        raw_event = {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "ready"}],
+            },
+        }
+        read_incremental_jsonl.return_value = ([raw_event], 10, "")
+        state = ccm.State(
+            sessions={
+                "frontend-helper": ccm.SessionRecord(
+                    name="frontend-helper",
+                    tmux_session="ccm-frontend-helper",
+                    display_name="frontend-helper",
+                    cwd="/work/app",
+                    started_at=0.0,
+                )
+            }
+        )
+
+        events = ccm.read_updates(state, "frontend-helper", wait_seconds=0, poll_interval=1, raw=True)
+
+        self.assertEqual(events, [raw_event])
 
 
 class DoctorTests(unittest.TestCase):

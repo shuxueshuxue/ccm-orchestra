@@ -162,6 +162,13 @@ def default_state_path(cwd: str | None = None) -> Path:
     return DEFAULT_HOME_ROOT / namespace_suffix(target_cwd) / "state.json"
 
 
+def discover_state_paths(home_root: Path | None = None) -> list[Path]:
+    home_root = home_root or DEFAULT_HOME_ROOT
+    if not home_root.exists():
+        return []
+    return sorted(path for path in home_root.glob("*/state.json") if path.is_file())
+
+
 def wechat_registry_path() -> Path:
     if "CCM_WECHAT_REGISTRY_PATH" in os.environ:
         return Path(os.environ["CCM_WECHAT_REGISTRY_PATH"]).expanduser()
@@ -920,7 +927,8 @@ def read_updates(
     include_thinking: bool = False,
     wait_seconds: float = 0.0,
     poll_interval: float = 2.0,
-) -> list[dict[str, str]]:
+    raw: bool = False,
+) -> list[dict[str, Any]]:
     if name not in state.sessions:
         raise CCMError(f"Unknown managed session: {name}")
     record = state.sessions[name]
@@ -942,6 +950,9 @@ def read_updates(
         )
         record.transcript_offset = next_offset
         record.transcript_buffer = next_buffer
+
+        if raw:
+            return events
 
         rendered = []
         for event in events:
@@ -2079,6 +2090,17 @@ def emit_events(events: list[dict[str, str]], *, as_json: bool) -> None:
         print()
 
 
+def emit_raw_events(events: list[dict[str, Any]], *, as_json: bool) -> None:
+    if as_json:
+        emit(events, as_json=True)
+        return
+    if not events:
+        print("No unread events")
+        return
+    for event in events:
+        print(json.dumps(event, ensure_ascii=False))
+
+
 def emit_list(records: list[SessionRecord], *, as_json: bool) -> None:
     payload = [
         {
@@ -2110,6 +2132,24 @@ def emit_list(records: list[SessionRecord], *, as_json: bool) -> None:
             f"{item['cwd']}  "
             f"{item['transcript']:<{transcript_width}}"
         )
+
+
+def list_sessions_all_scopes(home_root: Path | None = None) -> list[dict[str, str]]:
+    payload: list[dict[str, str]] = []
+    for state_path in discover_state_paths(home_root):
+        state = load_state(state_path)
+        for record in state.sessions.values():
+            payload.append(
+                {
+                    "name": record.name,
+                    "tmux_session": record.tmux_session,
+                    "cwd": record.cwd,
+                    "status": session_status(record),
+                    "transcript": record.transcript_path or "-",
+                    "state_path": str(state_path),
+                }
+            )
+    return payload
 
 
 def render_guide(audience: str) -> str:
@@ -2226,7 +2266,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     start_parser.add_argument("name")
 
-    subparsers.add_parser("list", help="List managed Claude sessions")
+    list_parser = subparsers.add_parser(
+        "list",
+        help="List managed Claude sessions",
+        description="List sessions in the current namespace, or use --all-scopes to flatten every saved namespace under ~/.claude-codex-manager.",
+    )
+    list_parser.add_argument("--all-scopes", action="store_true")
 
     inspect_parser = subparsers.add_parser(
         "inspect",
@@ -2250,7 +2295,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Read is a poll-based wait on Claude transcript output. It does not push a wakeup "
             "into another agent tab. Use it when you are waiting for helper output from the tmux "
             "session itself. If you need another visible tab to wake up and answer later, use "
-            "'relay' or a heartbeat-style push mechanism instead."
+            "'relay' or a heartbeat-style push mechanism instead. Use --raw when you need "
+            "unrendered transcript events for MCP/tool-trace debugging."
         ),
     )
     read_parser.add_argument("name")
@@ -2267,6 +2313,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         help="Seconds between transcript polling attempts while waiting.",
+    )
+    read_parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Emit raw transcript events without render_event filtering, for transcript-debug and MCP/tool traces.",
     )
 
     kill_parser = subparsers.add_parser("kill", help="Kill managed sessions")
@@ -2499,6 +2550,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "list":
+            if args.all_scopes:
+                emit(list_sessions_all_scopes(DEFAULT_HOME_ROOT), as_json=args.json)
+                return 0
             emit_list(list(state.sessions.values()), as_json=args.json)
             return 0
 
@@ -2527,9 +2581,13 @@ def main(argv: list[str] | None = None) -> int:
                 include_thinking=args.include_thinking,
                 wait_seconds=args.wait_seconds,
                 poll_interval=args.poll_interval,
+                raw=args.raw,
             )
             save_state(state, state_path)
-            emit_events(events, as_json=args.json)
+            if args.raw:
+                emit_raw_events(events, as_json=args.json)
+            else:
+                emit_events(events, as_json=args.json)
             return 0
 
         if args.command == "kill":
