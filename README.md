@@ -168,6 +168,19 @@ This is also the wakeup-safe path for agents in visible tabs:
 - use `ccm read` when waiting on Claude helper output from the `tmux` layer
 - use `ccm relay` when another visible tab needs to wake up and reply
 
+### Use the wechat-style peer layer for stable aliases and handoff
+
+If visible tabs will keep collaborating over time, register them once and talk by alias instead of raw tab title:
+
+```bash
+ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-contacts
+ccm wechat-send scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-shift scheduled-tasks "Take ownership of the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+```
+
+`wechat-send` and `wechat-shift` wrap the message with a system-style reminder that says how to reply, for example with `ccm wechat-send mycel "..."`. Register each tab under a specific alias and avoid collisions.
+
 ### Keep the supervising Codex tab alive
 
 ```bash

@@ -13,8 +13,9 @@ import subprocess
 import sys
 import textwrap
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,28 @@ class SessionRecord:
 class State:
     version: int = STATE_VERSION
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
+
+
+@dataclass
+class WeChatPeerRecord:
+    alias: str
+    title: str
+    window_id: str
+    worktree: str
+    repo_root: str
+    branch: str
+    tmux_session: str
+    helper: str
+    helper_status: str
+    helper_transcript: str
+    runtime: str
+    registered_at: float
+
+
+@dataclass
+class WeChatRegistry:
+    version: int = STATE_VERSION
+    peers: dict[str, WeChatPeerRecord] = field(default_factory=dict)
 
 
 def sanitize_name(name: str) -> str:
@@ -104,6 +127,12 @@ def default_state_path(cwd: str | None = None) -> Path:
         return Path(os.environ["CCM_HOME"]).expanduser() / "state.json"
     target_cwd = cwd or os.getcwd()
     return DEFAULT_HOME_ROOT / namespace_suffix(target_cwd) / "state.json"
+
+
+def wechat_registry_path() -> Path:
+    if "CCM_WECHAT_REGISTRY_PATH" in os.environ:
+        return Path(os.environ["CCM_WECHAT_REGISTRY_PATH"]).expanduser()
+    return DEFAULT_HOME_ROOT / "wechat-registry.json"
 
 
 def build_tmux_session_name(name: str, cwd: str) -> str:
@@ -180,6 +209,18 @@ def load_state(state_path: Path | None = None) -> State:
     return State(version=data.get("version", STATE_VERSION), sessions=sessions)
 
 
+def load_wechat_registry(path: Path | None = None) -> WeChatRegistry:
+    path = path or wechat_registry_path()
+    if not path.exists():
+        return WeChatRegistry()
+    data = json.loads(path.read_text())
+    peers = {
+        alias: WeChatPeerRecord(**record)
+        for alias, record in data.get("peers", {}).items()
+    }
+    return WeChatRegistry(version=data.get("version", STATE_VERSION), peers=peers)
+
+
 def save_state(state: State, state_path: Path | None = None) -> None:
     state_path = state_path or default_state_path()
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,6 +229,16 @@ def save_state(state: State, state_path: Path | None = None) -> None:
         "sessions": {name: asdict(record) for name, record in state.sessions.items()},
     }
     state_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def save_wechat_registry(registry: WeChatRegistry, path: Path | None = None) -> None:
+    path = path or wechat_registry_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": registry.version,
+        "peers": {alias: asdict(record) for alias, record in registry.peers.items()},
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def read_incremental_jsonl(path: Path, offset: int, buffer: str) -> tuple[list[dict[str, Any]], int, str]:
@@ -371,6 +422,19 @@ def tmux_capture(session_name: str, history_lines: int = 160) -> str:
 
 def tmux_send_enter(session_name: str) -> None:
     run_command(["tmux", "send-keys", "-t", session_name, "Enter"])
+
+
+def current_tmux_session_name() -> str:
+    pane = os.environ.get("TMUX_PANE", "")
+    if not pane:
+        return ""
+    result = run_command(
+        ["tmux", "display-message", "-p", "-t", pane, "#{session_name}"],
+        check=False,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
 
 
 def ensure_session_ready(
@@ -840,10 +904,41 @@ def send_message_to_kitty_tab(title: str, message: str, listen_on: str | None) -
     return {"title": tab["title"], "window_id": tab["window_id"], "endpoint": endpoint}
 
 
+def send_message_to_kitty_window(window_id: str, message: str, listen_on: str | None) -> dict[str, str]:
+    endpoint = resolve_kitty_endpoint(listen_on)
+    run_command(
+        [
+            "kitty",
+            "@",
+            "--to",
+            endpoint,
+            "send-text",
+            "--match",
+            f"id:{window_id}",
+            message,
+        ]
+    )
+    run_command(
+        [
+            "kitty",
+            "@",
+            "--to",
+            endpoint,
+            "send-key",
+            "--match",
+            f"id:{window_id}",
+            "enter",
+        ]
+    )
+    return {"window_id": window_id, "endpoint": endpoint}
+
+
 def resolve_current_sender_context(cwd: str, listen_on: str | None) -> dict[str, str]:
     resolved_cwd = namespace_cwd(cwd)
     context = workspace_identity(resolved_cwd)
     context["title"] = context["branch"] or Path(resolved_cwd).name or "unknown"
+    context["window_id"] = ""
+    context["cmdline"] = ""
     current_window_id = os.environ.get("KITTY_WINDOW_ID")
     if not current_window_id:
         return context
@@ -851,6 +946,8 @@ def resolve_current_sender_context(cwd: str, listen_on: str | None) -> dict[str,
     for tab in list_kitty_tabs(listen_on):
         if tab["window_id"] == current_window_id:
             context["title"] = tab["title"] or context["title"]
+            context["window_id"] = tab["window_id"]
+            context["cmdline"] = tab["cmdline"]
             break
     return context
 
@@ -902,6 +999,226 @@ def relay_message_to_kitty_tab(
     payload = send_message_to_kitty_tab(title, relay_message, listen_on)
     payload["from"] = sender["title"]
     payload["reply_via"] = f'ccm relay {shlex.quote(sender["title"])} "..."'
+    return payload
+
+
+def infer_runtime_label(cmdline: str, helper: str, tmux_session: str) -> str:
+    lowered = (cmdline or "").lower()
+    if "codex" in lowered:
+        return "codex"
+    if "claude" in lowered or helper or tmux_session.startswith("ccm-"):
+        return "claude"
+    if tmux_session:
+        return "tmux"
+    return "kitty"
+
+
+def register_wechat_peer(
+    registry: WeChatRegistry,
+    *,
+    alias: str,
+    cwd: str,
+    listen_on: str | None,
+    title: str = "",
+    tmux_session: str = "",
+    runtime: str = "",
+) -> WeChatPeerRecord:
+    current = resolve_current_sender_context(cwd, listen_on)
+    normalized_alias = sanitize_name(alias)
+    effective_title = title or current.get("title", "")
+    if not effective_title:
+        raise CCMError("Cannot register peer without a visible kitty tab title")
+
+    effective_tmux = tmux_session or current_tmux_session_name() or current.get("helper_tmux_session", "")
+    effective_window_id = current.get("window_id", "")
+    record = WeChatPeerRecord(
+        alias=normalized_alias,
+        title=effective_title,
+        window_id=effective_window_id,
+        worktree=current.get("worktree", namespace_cwd(cwd)),
+        repo_root=current.get("repo_root", ""),
+        branch=current.get("branch", ""),
+        tmux_session=effective_tmux,
+        helper=current.get("helper", ""),
+        helper_status=current.get("helper_status", ""),
+        helper_transcript=current.get("helper_transcript", ""),
+        runtime=runtime or infer_runtime_label(current.get("cmdline", ""), current.get("helper", ""), effective_tmux),
+        registered_at=time.time(),
+    )
+
+    # @@@unique-peer-binding - a visible tab should have one canonical alias in the
+    # global registry. Re-registering the same tab/window under a new alias replaces the old one.
+    for existing_alias, existing in list(registry.peers.items()):
+        if existing_alias == normalized_alias:
+            continue
+        if effective_window_id and existing.window_id == effective_window_id:
+            del registry.peers[existing_alias]
+            continue
+        if existing.title == record.title and existing.worktree == record.worktree:
+            del registry.peers[existing_alias]
+    registry.peers[normalized_alias] = record
+    return record
+
+
+def resolve_sender_alias(
+    registry: WeChatRegistry,
+    *,
+    cwd: str,
+    listen_on: str | None,
+    explicit_alias: str = "",
+) -> str:
+    if explicit_alias:
+        normalized = sanitize_name(explicit_alias)
+        if normalized not in registry.peers:
+            raise CCMError(f"Unknown wechat peer alias: {normalized}")
+        return normalized
+
+    current = resolve_current_sender_context(cwd, listen_on)
+    current_window_id = current.get("window_id", "")
+    for alias, peer in registry.peers.items():
+        if current_window_id and peer.window_id == current_window_id:
+            return alias
+    current_title = current.get("title", "")
+    current_worktree = current.get("worktree", "")
+    for alias, peer in registry.peers.items():
+        if peer.title == current_title and peer.worktree == current_worktree:
+            return alias
+    raise CCMError("Current sender is not registered. Run 'ccm wechat-register <alias>' first.")
+
+
+def resolve_registered_peer_target(
+    registry: WeChatRegistry,
+    *,
+    alias: str,
+    listen_on: str | None,
+) -> WeChatPeerRecord:
+    normalized = sanitize_name(alias)
+    peer = registry.peers.get(normalized)
+    if peer is None:
+        raise CCMError(f"Unknown wechat peer alias: {normalized}")
+
+    tabs = list_kitty_tabs(listen_on)
+    if peer.window_id:
+        for tab in tabs:
+            if tab["window_id"] == peer.window_id:
+                return replace(
+                    peer,
+                    title=tab["title"],
+                    window_id=tab["window_id"],
+                    worktree=tab["cwd"],
+                    repo_root=tab["repo_root"],
+                    branch=tab["branch"],
+                    helper=tab["helper"],
+                    helper_status=tab["helper_status"],
+                    helper_transcript=tab["helper_transcript"],
+                )
+    matches = [tab for tab in tabs if tab["title"] == peer.title]
+    if not matches:
+        raise CCMError(f"Registered wechat peer is not visible in kitty: {normalized}")
+    if len(matches) > 1:
+        raise CCMError(f"Multiple visible kitty tabs match wechat peer title: {peer.title}")
+    tab = matches[0]
+    return replace(
+        peer,
+        title=tab["title"],
+        window_id=tab["window_id"],
+        worktree=tab["cwd"],
+        repo_root=tab["repo_root"],
+        branch=tab["branch"],
+        helper=tab["helper"],
+        helper_status=tab["helper_status"],
+        helper_transcript=tab["helper_transcript"],
+    )
+
+
+def format_wechat_prompt(
+    message: str,
+    sender: WeChatPeerRecord,
+    *,
+    mode: str,
+    task: str = "",
+    scene: str = "",
+) -> str:
+    parts = [
+        f"{message}",
+        "<system-reminder>",
+        "<ccm-wechat-message>",
+        f"  <mode>{escape(mode)}</mode>",
+        f"  <from-alias>{escape(sender.alias)}</from-alias>",
+        f"  <title>{escape(sender.title)}</title>",
+        f"  <worktree>{escape(sender.worktree)}</worktree>",
+        f"  <branch>{escape(sender.branch)}</branch>",
+        f"  <repo>{escape(sender.repo_root)}</repo>",
+    ]
+    if sender.tmux_session:
+        parts.append(f"  <tmux-session>{escape(sender.tmux_session)}</tmux-session>")
+    if sender.helper:
+        parts.append(f"  <helper>{escape(sender.helper)}</helper>")
+    if sender.helper_transcript:
+        parts.append(f"  <transcript>{escape(sender.helper_transcript)}</transcript>")
+    if task:
+        parts.append(f"  <task>{escape(task)}</task>")
+    if scene:
+        parts.append(f"  <scene>{escape(scene)}</scene>")
+    parts.extend(
+        [
+            "</ccm-wechat-message>",
+            f'To reply, use ccm wechat-send {shlex.quote(sender.alias)} "...".',
+            f'To hand off, use ccm wechat-shift {shlex.quote(sender.alias)} "...".',
+            "</system-reminder>",
+        ]
+    )
+    return "\n".join(parts)
+
+
+def wechat_contacts_payload(registry: WeChatRegistry) -> list[dict[str, str]]:
+    payload = []
+    for alias, peer in sorted(registry.peers.items()):
+        payload.append(
+            {
+                "alias": alias,
+                "title": peer.title,
+                "runtime": peer.runtime,
+                "worktree": peer.worktree,
+                "branch": peer.branch,
+                "tmux_session": peer.tmux_session,
+            }
+        )
+    return payload
+
+
+def wechat_send_to_peer(
+    registry: WeChatRegistry,
+    *,
+    alias: str,
+    message: str,
+    listen_on: str | None,
+    cwd: str,
+    mode: str,
+    task: str = "",
+    scene: str = "",
+    from_alias: str = "",
+) -> dict[str, str]:
+    sender_alias = resolve_sender_alias(
+        registry,
+        cwd=cwd,
+        listen_on=listen_on,
+        explicit_alias=from_alias,
+    )
+    sender = registry.peers[sender_alias]
+    target = resolve_registered_peer_target(registry, alias=alias, listen_on=listen_on)
+    rendered = format_wechat_prompt(
+        message,
+        sender,
+        mode=mode,
+        task=task or sender.branch,
+        scene=scene,
+    )
+    payload = send_message_to_kitty_window(target.window_id, rendered, listen_on)
+    payload["from_alias"] = sender.alias
+    payload["to_alias"] = target.alias
+    payload["reply_via"] = f'ccm wechat-send {shlex.quote(sender.alias)} "..."'
+    payload["shift_via"] = f'ccm wechat-shift {shlex.quote(sender.alias)} "..."'
     return payload
 
 
@@ -1014,6 +1331,12 @@ def render_guide(audience: str) -> str:
         - `ccm relay` is push-based. It wakes another visible tab and gives it enough sender
           context to reply later.
         - Do not expect `read` to wake another agent tab for you.
+
+        Wechat-style peer layer:
+        - Use `ccm wechat-register <alias>` to bind the current visible tab to a stable alias.
+        - Use `ccm wechat-contacts` to list registered peers.
+        - Use `ccm wechat-send <alias> "..."` for a reply-friendly message.
+        - Use `ccm wechat-shift <alias> "..."` when you want to hand work off.
 
         Recommended operating pattern:
         - Each visible Codex tab should usually keep one dedicated, trusted, long-lived Claude
@@ -1148,6 +1471,47 @@ def build_parser() -> argparse.ArgumentParser:
     relay_parser.add_argument("--scene", default="")
     relay_parser.add_argument("--ports", default="")
 
+    wechat_register_parser = subparsers.add_parser(
+        "wechat-register",
+        help="Register the current visible tab as a named peer for reply-friendly handoff",
+        description=(
+            "Bind the current kitty tab, worktree, and optional tmux session to a stable alias. "
+            "This works for Codex, Claude, or any other agent running in the tab."
+        ),
+    )
+    wechat_register_parser.add_argument("alias")
+    wechat_register_parser.add_argument("--listen-on")
+    wechat_register_parser.add_argument("--title", default="")
+    wechat_register_parser.add_argument("--tmux-session", default="")
+    wechat_register_parser.add_argument("--runtime", default="")
+
+    subparsers.add_parser(
+        "wechat-contacts",
+        help="List registered peers in the global wechat-style registry",
+    )
+
+    wechat_send_parser = subparsers.add_parser(
+        "wechat-send",
+        help="Send a wechat-style message to a registered peer with reply instructions",
+    )
+    wechat_send_parser.add_argument("alias")
+    wechat_send_parser.add_argument("message")
+    wechat_send_parser.add_argument("--listen-on")
+    wechat_send_parser.add_argument("--task", default="")
+    wechat_send_parser.add_argument("--scene", default="")
+    wechat_send_parser.add_argument("--from-alias", default="")
+
+    wechat_shift_parser = subparsers.add_parser(
+        "wechat-shift",
+        help="Hand work off to a registered peer with a stronger transfer prompt",
+    )
+    wechat_shift_parser.add_argument("alias")
+    wechat_shift_parser.add_argument("message")
+    wechat_shift_parser.add_argument("--listen-on")
+    wechat_shift_parser.add_argument("--task", default="")
+    wechat_shift_parser.add_argument("--scene", default="")
+    wechat_shift_parser.add_argument("--from-alias", default="")
+
     guide_parser = subparsers.add_parser(
         "guide",
         help="Read long-form guidance for humans or agents",
@@ -1176,6 +1540,8 @@ def main(argv: list[str] | None = None) -> int:
     cwd = namespace_cwd(args.cwd)
     state_path = default_state_path(cwd)
     state = load_state(state_path)
+    wechat_path = wechat_registry_path()
+    wechat_registry = load_wechat_registry(wechat_path)
 
     try:
         if args.command == "start":
@@ -1263,6 +1629,58 @@ def main(argv: list[str] | None = None) -> int:
                     task=args.task,
                     scene=args.scene,
                     ports=args.ports,
+                ),
+                as_json=args.json,
+            )
+            return 0
+
+        if args.command == "wechat-register":
+            record = register_wechat_peer(
+                wechat_registry,
+                alias=args.alias,
+                cwd=cwd,
+                listen_on=args.listen_on,
+                title=args.title,
+                tmux_session=args.tmux_session,
+                runtime=args.runtime,
+            )
+            save_wechat_registry(wechat_registry, wechat_path)
+            emit(asdict(record), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-contacts":
+            emit(wechat_contacts_payload(wechat_registry), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-send":
+            emit(
+                wechat_send_to_peer(
+                    wechat_registry,
+                    alias=args.alias,
+                    message=args.message,
+                    listen_on=args.listen_on,
+                    cwd=cwd,
+                    mode="send",
+                    task=args.task,
+                    scene=args.scene,
+                    from_alias=args.from_alias,
+                ),
+                as_json=args.json,
+            )
+            return 0
+
+        if args.command == "wechat-shift":
+            emit(
+                wechat_send_to_peer(
+                    wechat_registry,
+                    alias=args.alias,
+                    message=args.message,
+                    listen_on=args.listen_on,
+                    cwd=cwd,
+                    mode="shift",
+                    task=args.task,
+                    scene=args.scene,
+                    from_alias=args.from_alias,
                 ),
                 as_json=args.json,
             )

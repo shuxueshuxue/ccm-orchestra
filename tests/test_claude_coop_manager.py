@@ -359,6 +359,133 @@ class GuideOutputTests(unittest.TestCase):
         self.assertIn("ccm guide agent", guide_text)
 
 
+class WeChatPeerTests(unittest.TestCase):
+    def test_root_help_mentions_wechat_commands(self):
+        help_text = ccm.build_parser().format_help()
+
+        self.assertIn("wechat-register", help_text)
+        self.assertIn("wechat-send", help_text)
+        self.assertIn("wechat-shift", help_text)
+
+    def test_register_wechat_peer_captures_current_binding(self):
+        registry = ccm.WeChatRegistry()
+        current = {
+            "title": "scheduled-tasks",
+            "worktree": "/work/app",
+            "repo_root": "/work",
+            "branch": "feat/demo",
+            "helper": "frontend-helper",
+            "helper_status": "running",
+            "helper_tmux_session": "ccm-frontend-helper-1234",
+            "helper_transcript": "/tmp/demo.jsonl",
+            "window_id": "498",
+        }
+
+        with mock.patch("claude_coop_manager.resolve_current_sender_context", return_value=current), \
+             mock.patch("claude_coop_manager.current_tmux_session_name", return_value="dev-shell"):
+            record = ccm.register_wechat_peer(
+                registry,
+                alias="scheduled-ui",
+                cwd="/work/app",
+                listen_on="unix:/tmp/mykitty",
+            )
+
+        self.assertEqual(record.alias, "scheduled-ui")
+        self.assertEqual(record.title, "scheduled-tasks")
+        self.assertEqual(record.window_id, "498")
+        self.assertEqual(record.tmux_session, "dev-shell")
+        self.assertEqual(registry.peers["scheduled-ui"].branch, "feat/demo")
+
+    def test_format_wechat_prompt_includes_reply_and_shift_instructions(self):
+        sender = ccm.WeChatPeerRecord(
+            alias="mycel",
+            title="mycel",
+            window_id="536",
+            worktree="/work/app",
+            repo_root="/work",
+            branch="feat/demo",
+            tmux_session="codex-main",
+            helper="frontend-helper",
+            helper_status="running",
+            helper_transcript="/tmp/demo.jsonl",
+            runtime="codex",
+            registered_at=0.0,
+        )
+
+        rendered = ccm.format_wechat_prompt(
+            "Please take over the frontend pass.",
+            sender,
+            mode="shift",
+            task="frontend pass",
+            scene="untouched",
+        )
+
+        self.assertIn("<system-reminder>", rendered)
+        self.assertIn("<ccm-wechat-message>", rendered)
+        self.assertIn("To reply, use ccm wechat-send mycel", rendered)
+        self.assertIn("To hand off, use ccm wechat-shift", rendered)
+        self.assertIn("<mode>shift</mode>", rendered)
+
+    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_sender_alias", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    def test_wechat_send_uses_registered_alias_and_window_target(
+        self,
+        resolve_registered_peer_target,
+        resolve_sender_alias,
+        send_message_to_kitty_window,
+    ):
+        registry = ccm.WeChatRegistry(
+            peers={
+                "scheduled-ui": ccm.WeChatPeerRecord(
+                    alias="scheduled-ui",
+                    title="scheduled-tasks",
+                    window_id="498",
+                    worktree="/work/scheduled",
+                    repo_root="/work",
+                    branch="feat/scheduled",
+                    tmux_session="codex-scheduled",
+                    helper="",
+                    helper_status="",
+                    helper_transcript="",
+                    runtime="codex",
+                    registered_at=0.0,
+                ),
+                "mycel": ccm.WeChatPeerRecord(
+                    alias="mycel",
+                    title="mycel",
+                    window_id="536",
+                    worktree="/work/main",
+                    repo_root="/work",
+                    branch="main",
+                    tmux_session="codex-main",
+                    helper="",
+                    helper_status="",
+                    helper_transcript="",
+                    runtime="codex",
+                    registered_at=0.0,
+                ),
+            }
+        )
+        resolve_sender_alias.return_value = "mycel"
+        resolve_registered_peer_target.return_value = registry.peers["scheduled-ui"]
+        send_message_to_kitty_window.return_value = {"title": "scheduled-tasks", "window_id": "498", "endpoint": "unix:/tmp/mykitty"}
+
+        payload = ccm.wechat_send_to_peer(
+            registry,
+            alias="scheduled-ui",
+            message="Please take over.",
+            listen_on="unix:/tmp/mykitty",
+            cwd="/work/main",
+            mode="send",
+        )
+
+        self.assertEqual(payload["to_alias"], "scheduled-ui")
+        self.assertEqual(payload["from_alias"], "mycel")
+        sent_message = send_message_to_kitty_window.call_args.args[1]
+        self.assertIn("ccm wechat-send mycel", sent_message)
+
+
 class CommandBuildTests(unittest.TestCase):
     @mock.patch("claude_coop_manager.resolve_claude_executable", autospec=True)
     def test_build_claude_command_uses_interactive_mode(self, resolve_claude_executable):

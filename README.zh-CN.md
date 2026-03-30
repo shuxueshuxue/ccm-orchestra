@@ -168,6 +168,19 @@ ccm relay "feat/main-thread-for-member" "Use Claude to review the UI and report 
 - 等 `tmux` helper 输出时，用 `ccm read`
 - 需要另一个可见 tab 之后醒来并回复时，用 `ccm relay`
 
+### 用 wechat 风格的 peer 层做稳定别名和转交
+
+如果几个可见 tab 会长期协作，就先注册一次，然后按 alias 通信，而不是一直手写 tab title：
+
+```bash
+ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-contacts
+ccm wechat-send scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-shift scheduled-tasks "Take ownership of the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+```
+
+`wechat-send` 和 `wechat-shift` 会自动包上一层 system-style reminder，并明确写出怎么回，例如 `ccm wechat-send mycel "..."`。每个 tab 都应该注册一个具体 alias，并避免撞名。
+
 ### 保持监督用的 Codex tab 存活
 
 ```bash

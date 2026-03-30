@@ -27,6 +27,15 @@ ccm tell "scheduled-tasks" "Please summarize your current frontend direction." -
 ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
+## Wechat-Style Peer Layer
+
+```bash
+ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-contacts
+ccm wechat-send scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-shift scheduled-tasks "Take over the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+```
+
 ## Useful Commands
 
 ```bash
