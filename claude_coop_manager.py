@@ -331,6 +331,12 @@ def save_wechat_transport_state(state: WeChatTransportState, path: Path | None =
     path.write_text(json.dumps(asdict(state), indent=2, sort_keys=True) + "\n")
 
 
+def save_wechat_transport_state_guarded(state: WeChatTransportState, path: Path | None = None) -> None:
+    path = path or wechat_transport_state_path()
+    guard_wechat_transport_state(state, path)
+    save_wechat_transport_state(state, path)
+
+
 def clear_wechat_transport_state(path: Path | None = None) -> None:
     path = path or wechat_transport_state_path()
     if path.exists():
@@ -2497,14 +2503,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "wechat-queue-reply":
             current_transport = require_wechat_transport_state(wechat_transport)
             payload = queue_and_flush_wechat_reply(current_transport, user_id=args.user_id, text=args.message)
-            save_wechat_transport_state(current_transport, wechat_transport_path)
+            save_wechat_transport_state_guarded(current_transport, wechat_transport_path)
             emit(payload, as_json=args.json)
             return 0
 
         if args.command == "wechat-poll-once":
             current_transport = require_wechat_transport_state(wechat_transport)
             payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
-            save_wechat_transport_state(current_transport, wechat_transport_path)
+            save_wechat_transport_state_guarded(current_transport, wechat_transport_path)
             emit(payload, as_json=args.json)
             return 0
 
@@ -2519,7 +2525,7 @@ def main(argv: list[str] | None = None) -> int:
             while True:
                 guard_wechat_transport_state(current_transport, wechat_transport_path)
                 payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
-                save_wechat_transport_state(current_transport, wechat_transport_path)
+                save_wechat_transport_state_guarded(current_transport, wechat_transport_path)
                 if args.json:
                     emit(payload, as_json=True)
                 elif payload["delivered_count"] or payload["messages"]:

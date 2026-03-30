@@ -1081,6 +1081,19 @@ class WeChatPhoneTests(unittest.TestCase):
 
         self.assertEqual(current.bound_alias, "claude-handoff")
 
+    def test_save_wechat_transport_state_guarded_preserves_newer_bound_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "transport.json"
+            current = ccm.WeChatTransportState(token="same-token", account_id="bot-1", bound_alias="claude-handoff")
+            persisted = ccm.WeChatTransportState(token="same-token", account_id="bot-1", bound_alias="mycel")
+            ccm.save_wechat_transport_state(persisted, path)
+
+            ccm.save_wechat_transport_state_guarded(current, path)
+            loaded = ccm.load_wechat_transport_state(path)
+
+        self.assertEqual(current.bound_alias, "mycel")
+        self.assertEqual(loaded.bound_alias, "mycel")
+
     def test_wechat_status_payload_reports_connection_and_binding(self):
         state = ccm.WeChatTransportState(
             token="bot-token",
