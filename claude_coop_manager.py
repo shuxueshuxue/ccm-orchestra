@@ -1375,6 +1375,14 @@ def wechat_users_payload(state: WeChatTransportState) -> list[dict[str, str]]:
     return [{"user_id": user_id} for user_id in sorted(state.context_tokens)]
 
 
+def active_wechat_user_id(state: WeChatTransportState) -> str:
+    if state.user_id and state.user_id in state.context_tokens:
+        return state.user_id
+    if len(state.context_tokens) == 1:
+        return next(iter(state.context_tokens))
+    raise CCMError("Cannot determine the active phone WeChat user for handoff notification")
+
+
 def extract_wechat_text(message: dict[str, Any]) -> str:
     for item in message.get("item_list") or []:
         if item.get("type") == WECHAT_MSG_ITEM_TEXT:
@@ -1805,7 +1813,7 @@ def render_wechat_guide(audience: str) -> str:
         - `ccm wechat-register <alias>` binds the current visible tab or current tmux helper to a stable alias.
         - `ccm wechat-contacts` lists registered peers.
         - `ccm wechat-send <alias> "..."` sends a reply-friendly message.
-        - `ccm wechat-shift <alias> "..."` hands work off. If the sender currently owns the phone thread, shift also rebinds phone ownership to the target alias.
+        - `ccm wechat-shift <alias> "..."` hands work off. If the sender currently owns the phone thread, shift also rebinds phone ownership to the target alias and sends a handoff notice back to the phone user.
         - `ccm wechat-unregister <alias>` removes a stale alias.
 
         Routing principle:
@@ -1839,9 +1847,11 @@ def wechat_send_to_peer(
     sender = registry.peers[sender_alias]
     target = resolve_registered_peer_target(registry, alias=alias, listen_on=listen_on)
     phone_handoff = False
+    handoff_user_id = ""
     if transport is not None and mode == "shift" and transport.bound_alias == sender.alias:
         wechat_bind(transport, registry, target.alias)
         phone_handoff = True
+        handoff_user_id = active_wechat_user_id(transport)
     rendered = format_wechat_prompt(
         message,
         sender,
@@ -1851,6 +1861,9 @@ def wechat_send_to_peer(
         compact=target.runtime == "claude",
     )
     payload = deliver_message_to_peer(target, rendered, listen_on)
+    if phone_handoff:
+        notice = f"Phone thread transferred to {target.alias}. Keep messaging here as usual."
+        wechat_reply(transport, user_id=handoff_user_id, text=notice)
     payload["from_alias"] = sender.alias
     payload["to_alias"] = target.alias
     payload["reply_via"] = f'ccm wechat-send {shlex.quote(sender.alias)} "..."'
@@ -1858,6 +1871,7 @@ def wechat_send_to_peer(
     if phone_handoff:
         payload["phone_handoff"] = "true"
         payload["phone_bound_alias"] = transport.bound_alias
+        payload["phone_notice_user_id"] = handoff_user_id
     return payload
 
 
@@ -2218,7 +2232,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Send a stronger handoff prompt to a registered peer. "
             "If the current sender alias also owns the phone WeChat thread, "
-            "this command moves phone ownership to the target alias as part of the same shift."
+            "this command moves phone ownership to the target alias as part of the same shift "
+            "and sends a handoff notice back to the phone user."
         ),
     )
     wechat_shift_parser.add_argument("alias")

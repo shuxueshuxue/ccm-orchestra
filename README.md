@@ -187,7 +187,7 @@ For headless Claude/tmux peers, register from inside the helper session instead 
 ccm wechat-register claude-handoff --runtime claude --tmux-session ccm-frontend-helper-abcd1234 --cwd "$PWD"
 ```
 
-`wechat-shift` is the real handoff primitive. If the sender currently owns the phone thread, `ccm wechat-shift <alias> "..."` also moves phone ownership to the target alias.
+`wechat-shift` is the real handoff primitive. If the sender currently owns the phone thread, `ccm wechat-shift <alias> "..."` also moves phone ownership to the target alias and sends a handoff notice back to the phone user.
 
 ### Phone WeChat onboarding is a different path
 
@@ -211,7 +211,7 @@ What that does:
 - `wechat-bind` chooses which registered peer alias receives incoming phone messages.
 - `wechat-watch --detach` starts the canonical background watcher inside `ccm` itself. Do not rely on ad-hoc shell background jobs for long-lived phone delivery.
 - `wechat-watch-status` shows whether that watcher is still alive.
-- Once the phone path is connected, `wechat-shift` can move both the peer conversation and the phone-thread owner in one step, as long as the sender currently owns that phone thread.
+- Once the phone path is connected, `wechat-shift` can move both the peer conversation and the phone-thread owner in one step, as long as the sender currently owns that phone thread. That shift now also emits a short notice to the phone user so the transfer is visible on the phone side.
 
 After that phone-side path is ready, `ccm`'s wechat-style peer layer can still be used for tab-to-tab coordination.
 

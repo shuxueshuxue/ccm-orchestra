@@ -43,7 +43,7 @@ For a headless Claude/tmux helper, register inside the helper session itself:
 ccm wechat-register claude-handoff --runtime claude --tmux-session ccm-frontend-helper-abcd1234 --cwd "$PWD"
 ```
 
-`ccm wechat-shift <alias> "..."` is the real handoff primitive. If you currently own the phone thread, shift also rebinds phone ownership to the target alias.
+`ccm wechat-shift <alias> "..."` is the real handoff primitive. If you currently own the phone thread, shift also rebinds phone ownership to the target alias and emits a short handoff notice to the phone user.
 
 ## Phone WeChat Layer
 

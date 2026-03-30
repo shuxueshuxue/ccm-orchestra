@@ -320,6 +320,14 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("reply hint", help_text)
         self.assertIn("no receipt convention", help_text)
 
+    def test_wechat_shift_help_mentions_phone_notice(self):
+        parser = ccm.build_parser()
+        shift_parser = parser._subparsers._group_actions[0].choices["wechat-shift"]
+        help_text = shift_parser.format_help()
+
+        self.assertIn("phone WeChat thread", help_text)
+        self.assertIn("handoff notice", help_text)
+
     def test_read_help_explains_poll_model_and_contrasts_with_relay(self):
         parser = ccm.build_parser()
         read_parser = parser._subparsers._group_actions[0].choices["read"]
@@ -619,8 +627,10 @@ class WeChatPeerTests(unittest.TestCase):
     @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
     @mock.patch("claude_coop_manager.resolve_sender_alias", autospec=True)
     @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    @mock.patch("claude_coop_manager.wechat_reply", autospec=True)
     def test_wechat_shift_rebinds_phone_owner_when_sender_currently_owns_thread(
         self,
+        wechat_reply,
         resolve_registered_peer_target,
         resolve_sender_alias,
         send_message_to_kitty_window,
@@ -657,10 +667,16 @@ class WeChatPeerTests(unittest.TestCase):
                 ),
             }
         )
-        transport = ccm.WeChatTransportState(token="bot-token", bound_alias="mycel")
+        transport = ccm.WeChatTransportState(
+            token="bot-token",
+            user_id="alice@im.wechat",
+            context_tokens={"alice@im.wechat": "ctx-1"},
+            bound_alias="mycel",
+        )
         resolve_sender_alias.return_value = "mycel"
         resolve_registered_peer_target.return_value = registry.peers["claude-handoff"]
         send_message_to_kitty_window.return_value = {"window_id": "536", "endpoint": "unix:/tmp/mykitty"}
+        wechat_reply.return_value = {"ok": True, "user_id": "alice@im.wechat"}
 
         with mock.patch("claude_coop_manager.ensure_tmux_session_ready", autospec=True), \
              mock.patch("claude_coop_manager.tmux_paste", autospec=True), \
@@ -678,6 +694,10 @@ class WeChatPeerTests(unittest.TestCase):
         self.assertEqual(transport.bound_alias, "claude-handoff")
         self.assertEqual(payload["phone_handoff"], "true")
         self.assertEqual(payload["phone_bound_alias"], "claude-handoff")
+        self.assertEqual(payload["phone_notice_user_id"], "alice@im.wechat")
+        wechat_reply.assert_called_once()
+        self.assertEqual(wechat_reply.call_args.kwargs["user_id"], "alice@im.wechat")
+        self.assertIn("claude-handoff", wechat_reply.call_args.kwargs["text"])
 
     def test_unregister_wechat_peer_removes_alias(self):
         registry = ccm.WeChatRegistry(
@@ -805,6 +825,30 @@ class WeChatPeerTests(unittest.TestCase):
 
 
 class WeChatPhoneTests(unittest.TestCase):
+    def test_active_wechat_user_id_prefers_state_user_id_when_known(self):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            user_id="alice@im.wechat",
+            context_tokens={
+                "alice@im.wechat": "ctx-1",
+                "bob@im.wechat": "ctx-2",
+            },
+        )
+
+        user_id = ccm.active_wechat_user_id(state)
+
+        self.assertEqual(user_id, "alice@im.wechat")
+
+    def test_active_wechat_user_id_uses_single_known_contact(self):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            context_tokens={"alice@im.wechat": "ctx-1"},
+        )
+
+        user_id = ccm.active_wechat_user_id(state)
+
+        self.assertEqual(user_id, "alice@im.wechat")
+
     def test_load_and_save_wechat_transport_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "wechat.json"
