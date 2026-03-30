@@ -127,6 +127,18 @@ class PaneStateTests(unittest.TestCase):
         self.assertTrue(ccm.pane_has_active_work(pane))
         self.assertFalse(ccm.pane_is_ready_for_input(pane))
 
+    def test_pane_with_effort_suffix_is_not_ready(self):
+        pane = """
+❯ Reply with exactly ENTER_PROBE_03
+
+✢ Scampering… (thinking with medium effort)
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+"""
+        self.assertTrue(ccm.pane_has_active_work(pane))
+        self.assertFalse(ccm.pane_is_ready_for_input(pane))
+
     def test_idle_pane_with_prompt_is_ready(self):
         pane = """
 ╭─── Claude Code v2.1.81 ──────────────────────────────────────────────────────╮
@@ -147,6 +159,34 @@ class ReadyTimeoutTests(unittest.TestCase):
     def test_ready_retry_budget_respects_env_override(self):
         with mock.patch.dict("os.environ", {"CCM_READY_TIMEOUT_SECONDS": "12"}, clear=False):
             self.assertEqual(ccm.ready_retry_budget(2.0), 6)
+
+
+class ReadyWaitTests(unittest.TestCase):
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_capture", autospec=True)
+    def test_ensure_tmux_session_ready_requires_stable_ready_observation(self, tmux_capture, _sleep):
+        transient_ready = """
+────────────────────────────────────────────────────────────────────────────────
+❯
+"""
+        busy_again = """
+✢ Scampering… (thinking with medium effort)
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+"""
+        stable_ready = """
+⏺ ENTER_PROBE_06
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+"""
+        tmux_capture.side_effect = [transient_ready, busy_again, stable_ready, stable_ready]
+
+        pane = ccm.ensure_tmux_session_ready("ccm-frontend-agent", retries=4, delay_seconds=0.1)
+
+        self.assertEqual(pane, stable_ready)
+        self.assertEqual(tmux_capture.call_count, 4)
 
 
 class TranscriptResolutionTests(unittest.TestCase):
@@ -1552,6 +1592,7 @@ class LifecycleTests(unittest.TestCase):
 
         tmux_paste.assert_called_once_with("ccm-frontend-agent", "build the page")
         tmux_send_enter.assert_called_once_with("ccm-frontend-agent")
+        _sleep.assert_any_call(ccm.TMUX_PASTE_SUBMIT_DELAY_SECONDS)
         self.assertEqual(updated.transcript_path, "/tmp/transcript.jsonl")
 
     @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)

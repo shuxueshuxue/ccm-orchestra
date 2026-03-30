@@ -31,6 +31,7 @@ DEFAULT_CLAUDE_PROJECTS_ROOT = Path(
 READY_DELAY_SECONDS = 2.0
 DEFAULT_READY_TIMEOUT_SECONDS = 300.0
 TMUX_PASTE_SUBMIT_DELAY_SECONDS = 0.2
+READY_CONFIRMATION_PASSES = 2
 WECHAT_DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 WECHAT_BOT_TYPE = "3"
 WECHAT_CHANNEL_VERSION = "0.1.0"
@@ -507,7 +508,7 @@ def pane_has_active_work(text: str) -> bool:
     # @@@busy-pane - Claude keeps the prompt visible while still working, so readiness
     # has to exclude spinner/status rows near the bottom instead of just checking for `❯`.
     return any(
-        re.match(r"^[✻✽✶·✢✳]\s+.+…(?:\s+\(\d+s\))?$", line)
+        re.match(r"^[✻✽✶·✢✳]\s+.+…(?:\s+\([^)]*\))?$", line)
         for line in pane_tail_lines(text)
     )
 
@@ -603,14 +604,20 @@ def ensure_tmux_session_ready(
 ) -> str:
     retries = ready_retry_budget(delay_seconds) if retries is None else retries
     last_pane = ""
+    ready_streak = 0
     for _ in range(retries):
         last_pane = tmux_capture(session_name)
         if pane_needs_trust_acceptance(last_pane):
+            ready_streak = 0
             tmux_send_enter(session_name)
             time.sleep(delay_seconds)
             continue
         if pane_is_ready_for_input(last_pane):
-            return last_pane
+            ready_streak += 1
+            if ready_streak >= READY_CONFIRMATION_PASSES:
+                return last_pane
+        else:
+            ready_streak = 0
         time.sleep(delay_seconds)
     raise CCMError(
         "Claude session did not become ready.\n\n"
@@ -906,6 +913,7 @@ def send_prompt(state: State, name: str, prompt: str) -> SessionRecord:
 
     ensure_session_ready(record)
     tmux_paste(record.tmux_session, prompt)
+    time.sleep(TMUX_PASTE_SUBMIT_DELAY_SECONDS)
     tmux_send_enter(record.tmux_session)
     time.sleep(1)
 
