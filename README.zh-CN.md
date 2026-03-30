@@ -63,6 +63,7 @@ ccm doctor --cwd "$PWD"
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
 ccm read frontend-helper --wait-seconds 20 --cwd "$PWD"
+ccm inspect frontend-helper --cwd "$PWD"
 ccm kill frontend-helper --cwd "$PWD"
 ```
 
@@ -77,6 +78,7 @@ pip install -e .
 ccm doctor
 ccm-smoke --cwd "$PWD"
 codex-heartbeat status
+codex-heartbeat test --tab-title mycel
 ```
 
 优先使用 venv。现在很多系统的系统 Python 会受 PEP 668 保护，所以直接对全局解释器执行 `pip install -e .` 可能会被拒绝，或者把包装到你根本不想动的 Python 里。
@@ -92,6 +94,8 @@ codex-heartbeat status
 3. 重启 helper。已经在跑的 helper 会继续沿用自己启动时的 binary 和 config root。
 
 如果你是 agent 或其他 LLM，不要直接即兴发挥，先跑 `ccm guide agent`。那里面有完整的操作规则、tmux/kitty 分层，以及唤醒模型说明。
+
+只有在你明确想绕开 cwd 推导出来的 namespace、直接操作某一个固定 state 文件时，才使用 `--state-path /abs/path/state.json`。这是排障/手术刀，不是日常路径。
 
 ### 最常用的一组命令
 
@@ -274,9 +278,10 @@ ccm wechat-watch-stop
 ### 保持监督用的 Codex tab 存活
 
 ```bash
-codex-heartbeat start --interval-seconds 1500
-codex-heartbeat status
-codex-heartbeat stop
+codex-heartbeat start --tab-title mycel --interval-seconds 1500
+codex-heartbeat status --tab-title mycel
+codex-heartbeat test --tab-title mycel
+codex-heartbeat stop --tab-title mycel
 ```
 
 ## 架构

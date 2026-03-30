@@ -63,6 +63,7 @@ ccm doctor --cwd "$PWD"
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
 ccm read frontend-helper --wait-seconds 20 --cwd "$PWD"
+ccm inspect frontend-helper --cwd "$PWD"
 ccm kill frontend-helper --cwd "$PWD"
 ```
 
@@ -77,6 +78,7 @@ pip install -e .
 ccm doctor
 ccm-smoke --cwd "$PWD"
 codex-heartbeat status
+codex-heartbeat test --tab-title mycel
 ```
 
 Prefer a venv. On many modern systems, system Python is protected by PEP 668, so `pip install -e .` against the global interpreter may be blocked or may mutate a Python you did not intend to touch.
@@ -92,6 +94,8 @@ Use the global `ccm` only. If a helper starts failing after a Claude or `ccm` up
 3. Restart the helper. Existing helpers keep the binary and config root they started with.
 
 If you are an agent or another LLM, run `ccm guide agent` before you improvise. That guide contains the longer operating rules, the tmux vs kitty split, and the wakeup model.
+
+Use `--state-path /abs/path/state.json` only when you intentionally want one explicit state file instead of the normal cwd-derived namespace. That is a debugging and surgery tool, not the everyday path.
 
 ### Minimal everyday usage
 
@@ -274,9 +278,10 @@ ccm wechat-watch-stop
 ### Keep the supervising Codex tab alive
 
 ```bash
-codex-heartbeat start --interval-seconds 1500
-codex-heartbeat status
-codex-heartbeat stop
+codex-heartbeat start --tab-title mycel --interval-seconds 1500
+codex-heartbeat status --tab-title mycel
+codex-heartbeat test --tab-title mycel
+codex-heartbeat stop --tab-title mycel
 ```
 
 ## Architecture

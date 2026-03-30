@@ -358,6 +358,22 @@ class MainDispatchTests(unittest.TestCase):
         load_state.assert_called_once_with(ccm.default_state_path("/work/app"))
         emit_list.assert_called_once()
 
+    def test_normalize_global_args_keeps_state_path_with_other_global_flags(self):
+        normalized = ccm.normalize_global_args(["doctor", "--json", "--state-path", "/tmp/override.json"])
+
+        self.assertEqual(normalized, ["--json", "--state-path", "/tmp/override.json", "doctor"])
+
+    @mock.patch("claude_coop_manager.emit_list", autospec=True)
+    @mock.patch("claude_coop_manager.load_state", autospec=True)
+    def test_main_uses_explicit_state_path_when_provided(self, load_state, emit_list):
+        load_state.return_value = ccm.State()
+
+        exit_code = ccm.main(["--state-path", "/tmp/override.json", "list"])
+
+        self.assertEqual(exit_code, 0)
+        load_state.assert_called_once_with(Path("/tmp/override.json"))
+        emit_list.assert_called_once()
+
     @mock.patch("claude_coop_manager.emit", autospec=True)
     @mock.patch("claude_coop_manager.load_state", autospec=True)
     def test_main_accepts_global_json_flag_after_subcommand(self, load_state, emit):
@@ -453,6 +469,11 @@ class ParserHelpTests(unittest.TestCase):
         help_text = list_parser.format_help()
 
         self.assertIn("--all-scopes", help_text)
+
+    def test_root_help_mentions_state_path_override(self):
+        help_text = ccm.build_parser().format_help()
+
+        self.assertIn("--state-path", help_text)
 
     def test_guide_help_mentions_agent_playbook(self):
         parser = ccm.build_parser()

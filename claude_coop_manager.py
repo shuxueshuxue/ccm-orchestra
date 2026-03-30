@@ -281,9 +281,21 @@ def normalize_global_args(argv: list[str] | None) -> list[str]:
                 front.append(argv[index + 1])
                 index += 2
                 continue
+        if arg == "--state-path":
+            front.append(arg)
+            if index + 1 < len(argv):
+                front.append(argv[index + 1])
+                index += 2
+                continue
         rest.append(arg)
         index += 1
     return front + rest
+
+
+def resolve_state_path(cwd: str, explicit_state_path: str | None = None) -> Path:
+    if explicit_state_path:
+        return Path(explicit_state_path).expanduser()
+    return default_state_path(cwd)
 
 
 def load_state(state_path: Path | None = None) -> State:
@@ -2185,6 +2197,8 @@ def render_guide(audience: str) -> str:
         - Run `ccm doctor --cwd "$PWD"` before blaming ccm.
         - If doctor reports `@@@claude-path-mismatch` or `@@@claude-version-mismatch`,
           restart the helper.
+        - Use `--state-path ...` only when you deliberately want one explicit state file
+          instead of the normal cwd-derived namespace.
 
         Core model:
         - tmux layer = the real helper/session layer.
@@ -2224,6 +2238,11 @@ def render_guide(audience: str) -> str:
         - run `ccm inspect frontend-helper --cwd "$PWD"`
         - look at the transcript search roots and pane tail before guessing
 
+        Heartbeat notes:
+        - `codex-heartbeat start --tab-title mycel` keeps one named visible tab awake.
+        - `codex-heartbeat test --tab-title mycel` is the one-shot push check when you
+          want to verify the kitty push path without starting a background loop.
+
         Use `ccm open` only when:
         - the helper looks stuck and transcript output is not enough
         - you want supervised live observation
@@ -2252,6 +2271,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--cwd", help="Select the session namespace directory; for start, also use it as the Claude cwd")
+    parser.add_argument(
+        "--state-path",
+        help="Use one explicit state.json path instead of the cwd-derived namespace path.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -2527,7 +2550,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = normalize_global_args(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
     cwd = namespace_cwd(args.cwd)
-    state_path = default_state_path(cwd)
+    state_path = resolve_state_path(cwd, args.state_path)
     state = load_state(state_path)
     wechat_path = wechat_registry_path()
     wechat_registry = load_wechat_registry(wechat_path)

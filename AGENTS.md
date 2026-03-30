@@ -67,11 +67,13 @@ ccm cleanup --cwd "$PWD"
 ccm doctor --cwd "$PWD"
 ccm inspect frontend-helper --cwd "$PWD"
 ccm read frontend-helper --raw --json --cwd "$PWD"
+codex-heartbeat test --tab-title mycel
 ```
 
 ## Rules
 
 - Always pass `--cwd "$PWD"` unless you intentionally want another namespace.
+- Use `--state-path /abs/path/state.json` only when you intentionally want one explicit state file instead of the normal cwd-derived namespace.
 - Pick helper names by job and keep them specific. Avoid colliding with helper names that already exist in the current namespace.
 - Prefer `ccm read` over scraping terminal text.
 - If `ccm read` is empty or transcript resolution lags, run `ccm inspect <helper> --cwd "$PWD"` before guessing. It shows transcript search roots and recent pane tail.
@@ -79,6 +81,7 @@ ccm read frontend-helper --raw --json --cwd "$PWD"
 - Use `ccm list --all-scopes --json` when the session you want may live in another saved namespace.
 - Prefer `ccm relay` over `ccm tell` when coordinating with another visible tab. `relay` auto-includes sender context and a reply hint.
 - Remember the wakeup model: `ccm read` is poll-based tmux waiting; `ccm relay` is push-based kitty messaging. Polling Claude output will not wake another agent tab.
+- `codex-heartbeat start/status/stop/test` can all target a custom visible tab title with `--tab-title ...`. Use `test` for a one-shot push before you start a long-running heartbeat loop.
 - Use normal interactive Claude only. The main reason is to avoid drifting into non-interactive automation patterns that may be riskier for the account.
 - `open` is not part of the everyday loop. Use it only for debugging, live observation, or deliberate visible-tab collaboration.
 - If a session crashed or `kill` was interrupted, run `ccm cleanup --cwd "$PWD"`.
