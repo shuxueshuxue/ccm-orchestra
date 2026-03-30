@@ -194,6 +194,12 @@ def wechat_watch_log_path() -> Path:
     return DEFAULT_HOME_ROOT / "wechat-watch.log"
 
 
+def wechat_watch_state_path() -> Path:
+    if "CCM_WECHAT_WATCH_STATE_PATH" in os.environ:
+        return Path(os.environ["CCM_WECHAT_WATCH_STATE_PATH"]).expanduser()
+    return DEFAULT_HOME_ROOT / "wechat-watch.json"
+
+
 def pid_is_running(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -328,6 +334,7 @@ def save_wechat_registry(registry: WeChatRegistry, path: Path | None = None) -> 
 def save_wechat_transport_state(state: WeChatTransportState, path: Path | None = None) -> None:
     path = path or wechat_transport_state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    state.saved_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     path.write_text(json.dumps(asdict(state), indent=2, sort_keys=True) + "\n")
 
 
@@ -341,6 +348,38 @@ def clear_wechat_transport_state(path: Path | None = None) -> None:
     path = path or wechat_transport_state_path()
     if path.exists():
         path.unlink()
+
+
+def save_wechat_watch_state(
+    *,
+    pid: int,
+    status: str,
+    heartbeat_at: str = "",
+    last_error: str = "",
+    path: Path | None = None,
+) -> None:
+    path = path or wechat_watch_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "pid": pid,
+                "status": status,
+                "heartbeat_at": heartbeat_at,
+                "last_error": last_error,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
+def load_wechat_watch_state(path: Path | None = None) -> dict[str, Any]:
+    path = path or wechat_watch_state_path()
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
 
 
 def read_incremental_jsonl(path: Path, offset: int, buffer: str) -> tuple[list[dict[str, Any]], int, str]:
@@ -1555,6 +1594,7 @@ def flush_pending_wechat_replies(state: WeChatTransportState) -> list[dict[str, 
 def launch_wechat_watch_daemon(*, listen_on: str | None, poll_interval: float) -> dict[str, Any]:
     pid_path = wechat_watch_pid_path()
     log_path = wechat_watch_log_path()
+    state_path = wechat_watch_state_path()
     existing_pid = load_pid_file(pid_path)
     if existing_pid and pid_is_running(existing_pid):
         raise CCMError(f"WeChat watch is already running with pid {existing_pid}")
@@ -1577,30 +1617,50 @@ def launch_wechat_watch_daemon(*, listen_on: str | None, poll_interval: float) -
             start_new_session=True,
         )
     pid_path.write_text(f"{process.pid}\n")
-    return {"started": True, "pid": process.pid, "pid_path": str(pid_path), "log_path": str(log_path)}
+    save_wechat_watch_state(
+        pid=process.pid,
+        status="starting",
+        heartbeat_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        path=state_path,
+    )
+    return {
+        "started": True,
+        "pid": process.pid,
+        "pid_path": str(pid_path),
+        "log_path": str(log_path),
+        "state_path": str(state_path),
+    }
 
 
 def wechat_watch_status() -> dict[str, Any]:
     pid_path = wechat_watch_pid_path()
     log_path = wechat_watch_log_path()
+    state_path = wechat_watch_state_path()
     pid = load_pid_file(pid_path)
+    state = load_wechat_watch_state(state_path)
     running = bool(pid and pid_is_running(pid))
     return {
         "running": running,
         "pid": pid or 0,
         "pid_path": str(pid_path),
         "log_path": str(log_path),
+        "state_path": str(state_path),
+        "watch_status": state.get("status", ""),
+        "heartbeat_at": state.get("heartbeat_at", ""),
+        "last_error": state.get("last_error", ""),
     }
 
 
 def wechat_watch_stop() -> dict[str, Any]:
     pid_path = wechat_watch_pid_path()
+    state_path = wechat_watch_state_path()
     pid = load_pid_file(pid_path)
     if not pid:
         return {"stopped": False, "reason": "not-running", "pid": 0}
     if pid_is_running(pid):
         os.kill(pid, signal.SIGTERM)
     pid_path.unlink(missing_ok=True)
+    save_wechat_watch_state(pid=pid, status="stopped", path=state_path)
     return {"stopped": True, "pid": pid}
 
 
@@ -2522,10 +2582,30 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
             current_transport = require_wechat_transport_state(wechat_transport)
+            current_pid = os.getpid()
             while True:
                 guard_wechat_transport_state(current_transport, wechat_transport_path)
-                payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
-                save_wechat_transport_state_guarded(current_transport, wechat_transport_path)
+                try:
+                    save_wechat_watch_state(
+                        pid=current_pid,
+                        status="running",
+                        heartbeat_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    )
+                    payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
+                    save_wechat_transport_state_guarded(current_transport, wechat_transport_path)
+                    save_wechat_watch_state(
+                        pid=current_pid,
+                        status="running",
+                        heartbeat_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    )
+                except CCMError as exc:
+                    save_wechat_watch_state(
+                        pid=current_pid,
+                        status="error",
+                        heartbeat_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        last_error=str(exc),
+                    )
+                    raise
                 if args.json:
                     emit(payload, as_json=True)
                 elif payload["delivered_count"] or payload["messages"]:

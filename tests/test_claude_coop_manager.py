@@ -1007,17 +1007,22 @@ class WeChatPhoneTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.dict(
                  "os.environ",
-                 {
+                {
                      "CCM_WECHAT_WATCH_PID_PATH": str(Path(tmp) / "watch.pid"),
                      "CCM_WECHAT_WATCH_LOG_PATH": str(Path(tmp) / "watch.log"),
-                 },
-                 clear=False,
+                     "CCM_WECHAT_WATCH_STATE_PATH": str(Path(tmp) / "watch.json"),
+                },
+                clear=False,
              ):
             payload = ccm.launch_wechat_watch_daemon(listen_on="unix:/tmp/mykitty", poll_interval=2.5)
+            persisted = json.loads(Path(payload["state_path"]).read_text())
 
             self.assertEqual(payload["pid"], 43210)
             self.assertEqual(Path(payload["pid_path"]).read_text().strip(), "43210")
             self.assertEqual(Path(payload["log_path"]).name, "watch.log")
+            self.assertEqual(persisted["pid"], 43210)
+            self.assertEqual(persisted["status"], "starting")
+            self.assertTrue(persisted["heartbeat_at"])
             self.assertTrue(popen.call_args.kwargs["start_new_session"])
             self.assertIn("wechat-watch", popen.call_args.args[0])
 
@@ -1025,38 +1030,47 @@ class WeChatPhoneTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.dict(
                  "os.environ",
-                 {
+                {
                      "CCM_WECHAT_WATCH_PID_PATH": str(Path(tmp) / "watch.pid"),
                      "CCM_WECHAT_WATCH_LOG_PATH": str(Path(tmp) / "watch.log"),
-                 },
-                 clear=False,
+                     "CCM_WECHAT_WATCH_STATE_PATH": str(Path(tmp) / "watch.json"),
+                },
+                clear=False,
              ), \
              mock.patch("claude_coop_manager.pid_is_running", return_value=True):
             Path(tmp, "watch.pid").write_text("43210\n")
+            Path(tmp, "watch.json").write_text(json.dumps({"pid": 43210, "heartbeat_at": "2026-03-30T08:00:00Z", "last_error": ""}))
             payload = ccm.wechat_watch_status()
 
         self.assertTrue(payload["running"])
         self.assertEqual(payload["pid"], 43210)
+        self.assertEqual(payload["heartbeat_at"], "2026-03-30T08:00:00Z")
+        self.assertEqual(payload["last_error"], "")
 
     @mock.patch("claude_coop_manager.os.kill", autospec=True)
     def test_wechat_watch_stop_terminates_running_process_and_clears_pidfile(self, os_kill):
         with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch.dict(
-                 "os.environ",
-                 {
-                     "CCM_WECHAT_WATCH_PID_PATH": str(Path(tmp) / "watch.pid"),
-                     "CCM_WECHAT_WATCH_LOG_PATH": str(Path(tmp) / "watch.log"),
-                 },
-                 clear=False,
-             ), \
-             mock.patch("claude_coop_manager.pid_is_running", return_value=True):
+            mock.patch.dict(
+                "os.environ",
+                {
+                    "CCM_WECHAT_WATCH_PID_PATH": str(Path(tmp) / "watch.pid"),
+                    "CCM_WECHAT_WATCH_LOG_PATH": str(Path(tmp) / "watch.log"),
+                    "CCM_WECHAT_WATCH_STATE_PATH": str(Path(tmp) / "watch.json"),
+                },
+                clear=False,
+            ), \
+            mock.patch("claude_coop_manager.pid_is_running", return_value=True):
             pid_path = Path(tmp) / "watch.pid"
+            state_path = Path(tmp) / "watch.json"
             pid_path.write_text("43210\n")
+            state_path.write_text(json.dumps({"pid": 43210, "heartbeat_at": "2026-03-30T08:00:00Z", "last_error": ""}))
             payload = ccm.wechat_watch_stop()
+            persisted = json.loads(state_path.read_text())
 
         os_kill.assert_called_once()
         self.assertFalse(pid_path.exists())
         self.assertTrue(payload["stopped"])
+        self.assertEqual(persisted["status"], "stopped")
 
     def test_wechat_watch_refuses_to_overwrite_newer_transport_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1101,6 +1115,7 @@ class WeChatPhoneTests(unittest.TestCase):
             user_id="user-1",
             context_tokens={"alice@im.wechat": "ctx-1", "bob@im.wechat": "ctx-2"},
             bound_alias="mycel",
+            saved_at="2026-03-30T08:01:02Z",
         )
         payload = ccm.wechat_status_payload(state)
 
@@ -1108,6 +1123,22 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(payload["account_id"], "bot-1")
         self.assertEqual(payload["contact_count"], 2)
         self.assertEqual(payload["bound_alias"], "mycel")
+        self.assertEqual(payload["saved_at"], "2026-03-30T08:01:02Z")
+
+    @mock.patch("claude_coop_manager.time.strftime", autospec=True, return_value="2026-03-30T09:00:00Z")
+    def test_save_wechat_transport_state_refreshes_saved_at(self, time_strftime):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "transport.json"
+            state = ccm.WeChatTransportState(
+                token="bot-token",
+                account_id="bot-1",
+                saved_at="2026-03-30T08:00:00Z",
+            )
+
+            ccm.save_wechat_transport_state(state, path)
+            loaded = ccm.load_wechat_transport_state(path)
+
+        self.assertEqual(loaded.saved_at, "2026-03-30T09:00:00Z")
 
     def test_wechat_bind_updates_bound_alias(self):
         registry = ccm.WeChatRegistry(
