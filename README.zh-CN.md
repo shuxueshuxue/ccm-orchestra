@@ -206,26 +206,29 @@ ccm relay "feat/main-thread-for-member" "Use Claude to review the UI and report 
 - 等 `tmux` helper 输出时，用 `ccm read`
 - 需要另一个可见 tab 之后醒来并回复时，用 `ccm relay`
 
-### 用 wechat 风格的 peer 层做稳定别名和转交
+### 用 wechat 风格的 peer 层做直接寻址
 
-如果几个可见 tab 会长期协作，就先注册一次，然后按 alias 通信，而不是一直手写 tab title：
+统一只说一种寻址语言：
+- `kitty:<tab-title>`
+- `tmux:<session-name>`
 
-```bash
-ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-contacts
-ccm wechat-send scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-shift scheduled-tasks "Take ownership of the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-```
-
-`wechat-send` 和 `wechat-shift` 会自动包上一层 system-style reminder，并明确写出怎么回，例如 `ccm wechat-send mycel "..."`。每个 tab 都应该注册一个具体 alias，并避免撞名。
-
-如果是 headless 的 Claude/tmux helper，就直接在 helper 所在的 tmux 会话里注册，不要为了 WeChat 临时再开一个可见 kitty tab：
+可见 tab 不需要 registry，headless helper 也不需要假 alias。直接写目标：
 
 ```bash
-ccm wechat-register claude-handoff --runtime claude --tmux-session ccm-frontend-helper-abcd1234 --cwd "$PWD"
+ccm wechat-targets --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-send kitty:scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-shift kitty:scheduled-tasks "Take ownership of the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
-`wechat-shift` 才是真正的转交原语。如果当前 sender 本来就是手机线程 owner，那么 `ccm wechat-shift <alias> "..."` 会同时把 phone ownership 切到目标 alias，并给手机侧发一条转交通知。
+`wechat-send` 和 `wechat-shift` 会自动包上一层 system-style reminder，并明确写出怎么回，例如 `ccm wechat-send kitty:mycel "..."`。
+
+如果是 headless 的 Claude/tmux helper，就直接写 tmux session，不要为了 WeChat 临时再开一个可见 kitty tab：
+
+```bash
+ccm wechat-send tmux:ccm-frontend-helper-abcd1234 "Please take over this phone thread." --cwd "$PWD"
+```
+
+`wechat-shift` 才是真正的转交原语。如果当前 sender 本来就是手机线程 owner，那么 `ccm wechat-shift <target> "..."` 会同时把 phone ownership 切到这个目标，并给手机侧发一条转交通知。
 
 ### 手机微信接入是另一条路径
 
@@ -236,8 +239,7 @@ ccm wechat-register claude-handoff --runtime claude --tmux-session ccm-frontend-
 ```bash
 ccm wechat-connect
 ccm wechat-status
-ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-bind mycel
+ccm wechat-bind kitty:mycel
 ccm wechat-watch --detach --listen-on "${KITTY_LISTEN_ON}"
 ccm wechat-watch-status
 ```
@@ -246,16 +248,16 @@ ccm wechat-watch-status
 
 - `wechat-connect` 直接对接 WeChat iLink transport，去申请真正的微信二维码，把它渲染成 PNG，并且可以直接打开给用户扫码。
 - `wechat-status` 用来确认全局手机侧 WeChat transport 是否已经连上。
-- `wechat-bind` 决定手机侧新消息默认送到哪个已注册 alias。
+- `wechat-bind` 决定手机侧新消息默认送到哪个直接目标。
 - `wechat-watch --detach` 用 `ccm` 自己托管后台 watcher。不要再依赖临时 shell 后台脚本去跑长期手机消息投递。
 - `wechat-watch-status` 用来看这个 watcher 现在是否还活着。
-- 手机链路连好之后，只要当前 sender 正持有这个 phone thread，`wechat-shift` 就能把 peer 对话和 phone ownership 一起转给目标 alias，并且会给手机用户补一条可见的转交提示。
+- 手机链路连好之后，只要当前 sender 正持有这个 phone thread，`wechat-shift` 就能把 peer 对话和 phone ownership 一起转给目标，并且会给手机用户补一条可见的转交提示。
 
 等这条手机侧路径准备好之后，`ccm` 里的 wechat 风格 peer 层仍然可以继续负责 tab 之间的协作和转交。
 
 现场规则：
 
-- 每次重新 `wechat-connect` 之后，都要再跑一次 `ccm wechat-bind <alias>`。新扫码会创建新的 transport session，不要假设旧绑定会自动跟过去。
+- 每次重新 `wechat-connect` 之后，都要再跑一次 `ccm wechat-bind <target>`。新扫码会创建新的 transport session，不要假设旧绑定会自动跟过去。
 - 如果 watcher 是在旧的 WeChat session 上启动的，重连后就要停掉旧 watcher 再起新的。`ccm` 现在会拒绝让 stale watcher 把更新后的 transport state 覆盖回旧状态。
 - `ccm wechat-poll-once` 适合 debug 或单次拉取；真正长期运行要用 `ccm wechat-watch --detach`。
 

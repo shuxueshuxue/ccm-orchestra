@@ -52,9 +52,18 @@ def smoke_prompt(token: str) -> str:
 
 def events_include_token(events: list[dict[str, Any]], token: str) -> bool:
     for event in events:
-        if token in str(event.get("text", "")):
+        if token in json.dumps(event, ensure_ascii=False):
             return True
     return False
+
+
+def first_terminal_failure(events: list[dict[str, Any]]) -> str:
+    for event in events:
+        if event.get("error") == "rate_limit":
+            return "Claude usage limit blocked the smoke helper before it could echo the probe token."
+        if event.get("error"):
+            return f"Smoke helper returned terminal error: {event.get('error')}"
+    return ""
 
 
 def run_smoke(
@@ -84,9 +93,13 @@ def run_smoke(
                     helper_name,
                     "--wait-seconds",
                     str(read_wait_seconds),
+                    "--raw",
                 ]
             )
         )
+        terminal_failure = first_terminal_failure(events)
+        if terminal_failure:
+            raise RuntimeError(terminal_failure)
         if not events_include_token(events, probe_token):
             raise RuntimeError(f"Smoke read completed but did not contain probe token: {probe_token}")
         kill = parse_json_output(run_cli(["ccm", "--json", "--cwd", cwd, "kill", helper_name]))

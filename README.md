@@ -206,26 +206,29 @@ This is also the wakeup-safe path for agents in visible tabs:
 - use `ccm read` when waiting on Claude helper output from the `tmux` layer
 - use `ccm relay` when another visible tab needs to wake up and reply
 
-### Use the wechat-style peer layer for stable aliases and handoff
+### Use the wechat-style peer layer with direct targets
 
-If visible tabs will keep collaborating over time, register them once and talk by alias instead of raw tab title:
+Use one address language everywhere:
+- `kitty:<tab-title>`
+- `tmux:<session-name>`
 
-```bash
-ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-contacts
-ccm wechat-send scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-shift scheduled-tasks "Take ownership of the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-```
-
-`wechat-send` and `wechat-shift` wrap the message with a system-style reminder that says how to reply, for example with `ccm wechat-send mycel "..."`. Register each tab under a specific alias and avoid collisions.
-
-For headless Claude/tmux peers, register from inside the helper session instead of opening a visible kitty tab just for WeChat:
+Visible tabs do not need a registry. Headless helpers do not need fake aliases. Pick the right target directly:
 
 ```bash
-ccm wechat-register claude-handoff --runtime claude --tmux-session ccm-frontend-helper-abcd1234 --cwd "$PWD"
+ccm wechat-targets --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-send kitty:scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-shift kitty:scheduled-tasks "Take ownership of the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
-`wechat-shift` is the real handoff primitive. If the sender currently owns the phone thread, `ccm wechat-shift <alias> "..."` also moves phone ownership to the target alias and sends a handoff notice back to the phone user.
+`wechat-send` and `wechat-shift` wrap the message with a system-style reminder that says how to reply, for example with `ccm wechat-send kitty:mycel "..."`.
+
+For headless Claude/tmux peers, target the session directly instead of opening a visible kitty tab just for WeChat:
+
+```bash
+ccm wechat-send tmux:ccm-frontend-helper-abcd1234 "Please take over this phone thread." --cwd "$PWD"
+```
+
+`wechat-shift` is the real handoff primitive. If the sender currently owns the phone thread, `ccm wechat-shift <target> "..."` also moves phone ownership to that target and sends a handoff notice back to the phone user.
 
 ### Phone WeChat onboarding is a different path
 
@@ -236,8 +239,7 @@ Use the real CLI flow:
 ```bash
 ccm wechat-connect
 ccm wechat-status
-ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-bind mycel
+ccm wechat-bind kitty:mycel
 ccm wechat-watch --detach --listen-on "${KITTY_LISTEN_ON}"
 ccm wechat-watch-status
 ```
@@ -246,7 +248,7 @@ What that does:
 
 - `wechat-connect` talks directly to the WeChat iLink transport, requests a real QR code, renders it into a PNG, and can open it so the user can scan with their phone.
 - `wechat-status` confirms whether the global phone-side WeChat transport is connected.
-- `wechat-bind` chooses which registered peer alias receives incoming phone messages.
+- `wechat-bind` chooses which direct target receives incoming phone messages.
 - `wechat-watch --detach` starts the canonical background watcher inside `ccm` itself. Do not rely on ad-hoc shell background jobs for long-lived phone delivery.
 - `wechat-watch-status` shows whether that watcher is still alive.
 - Once the phone path is connected, `wechat-shift` can move both the peer conversation and the phone-thread owner in one step, as long as the sender currently owns that phone thread. That shift now also emits a short notice to the phone user so the transfer is visible on the phone side.
@@ -255,7 +257,7 @@ After that phone-side path is ready, `ccm`'s wechat-style peer layer can still b
 
 Operational rules that matter in practice:
 
-- After every new `wechat-connect`, run `ccm wechat-bind <alias>` again. A new login creates a new transport session; do not assume the old binding still points at the right live connection.
+- After every new `wechat-connect`, run `ccm wechat-bind <target>` again. A new login creates a new transport session; do not assume the old binding still points at the right live connection.
 - If a watcher was started against an older WeChat session, stop it and start a fresh one after reconnecting. `ccm` now refuses to let a stale watcher overwrite a newer transport state.
 - Use `ccm wechat-poll-once` for debugging or one-shot delivery. Use `ccm wechat-watch --detach` for the real ongoing path.
 

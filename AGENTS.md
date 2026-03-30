@@ -31,27 +31,29 @@ ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ## Wechat-Style Peer Layer
 
 ```bash
-ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-contacts
-ccm wechat-send scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-shift scheduled-tasks "Take over the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-targets --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-send kitty:scheduled-tasks "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-shift kitty:scheduled-tasks "Take over the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
-For a headless Claude/tmux helper, register inside the helper session itself:
+Use one direct target language:
+- `kitty:<tab-title>`
+- `tmux:<session-name>`
+
+For a headless Claude/tmux helper, target the tmux session directly:
 
 ```bash
-ccm wechat-register claude-handoff --runtime claude --tmux-session ccm-frontend-helper-abcd1234 --cwd "$PWD"
+ccm wechat-send tmux:ccm-frontend-helper-abcd1234 "Please take over the phone thread." --cwd "$PWD"
 ```
 
-`ccm wechat-shift <alias> "..."` is the real handoff primitive. If you currently own the phone thread, shift also rebinds phone ownership to the target alias and emits a short handoff notice to the phone user.
+`ccm wechat-shift <target> "..."` is the real handoff primitive. If you currently own the phone thread, shift also rebinds phone ownership to that target and emits a short handoff notice to the phone user.
 
 ## Phone WeChat Layer
 
 ```bash
 ccm wechat-connect
 ccm wechat-status
-ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
-ccm wechat-bind mycel
+ccm wechat-bind kitty:mycel
 ccm wechat-watch --detach --listen-on "${KITTY_LISTEN_ON}"
 ccm wechat-watch-status
 ```
@@ -85,5 +87,5 @@ codex-heartbeat test --tab-title mycel
 - Use normal interactive Claude only. The main reason is to avoid drifting into non-interactive automation patterns that may be riskier for the account.
 - `open` is not part of the everyday loop. Use it only for debugging, live observation, or deliberate visible-tab collaboration.
 - If a session crashed or `kill` was interrupted, run `ccm cleanup --cwd "$PWD"`.
-- After every new `ccm wechat-connect`, run `ccm wechat-bind <alias>` again. A new phone WeChat login is a new transport session.
+- After every new `ccm wechat-connect`, run `ccm wechat-bind <target>` again. A new phone WeChat login is a new transport session.
 - For ongoing phone delivery, use `ccm wechat-watch --detach`, not an ad-hoc shell background job.

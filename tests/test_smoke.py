@@ -47,6 +47,7 @@ class SmokeCheckTests(unittest.TestCase):
         self.assertEqual(run_cli.call_args_list[2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "start", "smoke-helper"])
         self.assertEqual(run_cli.call_args_list[5].args[0][:6], ["ccm", "--json", "--cwd", "/work/demo", "read", "smoke-helper"])
         self.assertIn("--wait-seconds", run_cli.call_args_list[5].args[0])
+        self.assertIn("--raw", run_cli.call_args_list[5].args[0])
         self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-helper"])
         self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
 
@@ -64,6 +65,40 @@ class SmokeCheckTests(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(RuntimeError, "probe token"):
+            smoke.run_smoke(
+                cwd="/work/demo",
+                helper_name="smoke-helper",
+                read_wait_seconds=12.0,
+                probe_token="EXPECTED_TOKEN",
+            )
+
+        self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-helper"])
+        self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
+
+    @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
+    def test_run_smoke_surfaces_rate_limit_events_clearly(self, run_cli):
+        run_cli.side_effect = [
+            completed(stdout=json.dumps({"ok": True})),
+            completed(stdout=json.dumps({"running": True})),
+            completed(stdout=json.dumps({"name": "smoke-helper", "status": "running"})),
+            completed(stdout=json.dumps([{"name": "smoke-helper", "status": "running"}])),
+            completed(stdout=json.dumps({"name": "smoke-helper", "transcript": "/tmp/demo.jsonl"})),
+            completed(
+                stdout=json.dumps(
+                    [
+                        {
+                            "kind": "assistant",
+                            "text": "You've hit your limit · resets 7am",
+                            "error": "rate_limit",
+                        }
+                    ]
+                )
+            ),
+            completed(stdout=json.dumps([{"name": "smoke-helper", "status": "killed"}])),
+            completed(stdout=json.dumps({"removed_dead": [], "killed_live": []})),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "usage limit"):
             smoke.run_smoke(
                 cwd="/work/demo",
                 helper_name="smoke-helper",

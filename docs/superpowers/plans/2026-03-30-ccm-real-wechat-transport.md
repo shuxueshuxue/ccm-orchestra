@@ -17,15 +17,15 @@
 - Test: `tests/test_claude_coop_manager.py`
 
 - [ ] Write failing tests for direct connect/state behavior and remove leon-login assumptions
-- [ ] Run `python3 -m unittest tests/test_claude_coop_manager.py -v`
+- [ ] Run `python3 -m unittest tests/test_cli.py -v`
 - [ ] Implement minimal direct transport state and direct QR/status helpers
-- [ ] Run `python3 -m unittest tests/test_claude_coop_manager.py -v`
+- [ ] Run `python3 -m unittest tests/test_cli.py -v`
 
-### Task 2: Bind incoming phone WeChat messages to a registered peer alias
+### Task 2: Bind incoming phone WeChat messages to a direct target
 
 **Files:**
-- Modify: `claude_coop_manager.py`
-- Test: `tests/test_claude_coop_manager.py`
+- Modify: `ccm_orchestra/cli.py`
+- Test: `tests/test_cli.py`
 
 - [ ] Write failing tests for `wechat-bind`, `wechat-unbind`, and inbound delivery formatting
 - [ ] Run targeted tests

@@ -67,7 +67,7 @@ The peer layer is still responsible for:
 - `ccm wechat-connect`
 - `ccm wechat-status`
 - `ccm wechat-disconnect`
-- `ccm wechat-bind <alias>`
+- `ccm wechat-bind <target>`
 - `ccm wechat-unbind`
 - `ccm wechat-users`
 - `ccm wechat-reply <user_id> "..."`
@@ -76,10 +76,9 @@ The peer layer is still responsible for:
 
 Existing peer commands stay:
 
-- `ccm wechat-register`
-- `ccm wechat-contacts`
-- `ccm wechat-send`
-- `ccm wechat-shift`
+- `ccm wechat-targets`
+- `ccm wechat-send <target> "..."`
+- `ccm wechat-shift <target> "..."`
 
 ## Delivery Format
 
@@ -87,7 +86,7 @@ Incoming phone WeChat messages delivered to a bound visible tab should include a
 
 - source user id
 - source text
-- current bound alias
+- current bound target
 - exact reply command
 - exact handoff command
 

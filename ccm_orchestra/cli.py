@@ -65,8 +65,15 @@ class State:
 
 
 @dataclass
-class WeChatPeerRecord:
-    alias: str
+class WeChatTargetSpec:
+    kind: str
+    value: str
+
+
+@dataclass
+class WeChatTargetRecord:
+    target: str
+    kind: str
     title: str
     window_id: str
     worktree: str
@@ -77,13 +84,6 @@ class WeChatPeerRecord:
     helper_status: str
     helper_transcript: str
     runtime: str
-    registered_at: float
-
-
-@dataclass
-class WeChatRegistry:
-    version: int = STATE_VERSION
-    peers: dict[str, WeChatPeerRecord] = field(default_factory=dict)
 
 
 @dataclass
@@ -95,7 +95,7 @@ class WeChatTransportState:
     saved_at: str = ""
     sync_buf: str = ""
     context_tokens: dict[str, str] = field(default_factory=dict)
-    bound_alias: str = ""
+    bound_target: str = ""
     pending_replies: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -167,12 +167,6 @@ def discover_state_paths(home_root: Path | None = None) -> list[Path]:
     if not home_root.exists():
         return []
     return sorted(path for path in home_root.glob("*/state.json") if path.is_file())
-
-
-def wechat_registry_path() -> Path:
-    if "CCM_WECHAT_REGISTRY_PATH" in os.environ:
-        return Path(os.environ["CCM_WECHAT_REGISTRY_PATH"]).expanduser()
-    return DEFAULT_HOME_ROOT / "wechat-registry.json"
 
 
 def wechat_transport_state_path() -> Path:
@@ -310,23 +304,13 @@ def load_state(state_path: Path | None = None) -> State:
     return State(version=data.get("version", STATE_VERSION), sessions=sessions)
 
 
-def load_wechat_registry(path: Path | None = None) -> WeChatRegistry:
-    path = path or wechat_registry_path()
-    if not path.exists():
-        return WeChatRegistry()
-    data = json.loads(path.read_text())
-    peers = {
-        alias: WeChatPeerRecord(**record)
-        for alias, record in data.get("peers", {}).items()
-    }
-    return WeChatRegistry(version=data.get("version", STATE_VERSION), peers=peers)
-
-
 def load_wechat_transport_state(path: Path | None = None) -> WeChatTransportState | None:
     path = path or wechat_transport_state_path()
     if not path.exists():
         return None
     data = json.loads(path.read_text())
+    if "bound_alias" in data and "bound_target" not in data:
+        data["bound_target"] = f"kitty:{data.pop('bound_alias')}"
     return WeChatTransportState(**data)
 
 
@@ -338,16 +322,6 @@ def save_state(state: State, state_path: Path | None = None) -> None:
         "sessions": {name: asdict(record) for name, record in state.sessions.items()},
     }
     state_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
-def save_wechat_registry(registry: WeChatRegistry, path: Path | None = None) -> None:
-    path = path or wechat_registry_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "version": registry.version,
-        "peers": {alias: asdict(record) for alias, record in registry.peers.items()},
-    }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def save_wechat_transport_state(state: WeChatTransportState, path: Path | None = None) -> None:
@@ -600,6 +574,11 @@ def current_tmux_session_name() -> str:
     )
     if result.returncode != 0:
         return ""
+    return result.stdout.strip()
+
+
+def tmux_session_cwd(session_name: str) -> str:
+    result = run_command(["tmux", "display-message", "-p", "-t", session_name, "#{pane_current_path}"])
     return result.stdout.strip()
 
 
@@ -1159,12 +1138,12 @@ def send_message_to_kitty_window(window_id: str, message: str, listen_on: str | 
     return {"window_id": window_id, "endpoint": endpoint}
 
 
-def deliver_message_to_peer(target: WeChatPeerRecord, message: str, listen_on: str | None) -> dict[str, str]:
+def deliver_message_to_target(target: WeChatTargetRecord, message: str, listen_on: str | None) -> dict[str, str]:
     if target.runtime == "claude" and target.tmux_session:
         ensure_tmux_session_ready(target.tmux_session)
     if not target.window_id:
         if not target.tmux_session:
-            raise CCMError(f"WeChat peer {target.alias} has no visible kitty window or tmux session")
+            raise CCMError(f"WeChat target {target.target} has no visible kitty window or tmux session")
         # @@@headless-peer-delivery - headless claude/tmux peers must remain reachable
         # even when no visible kitty tab exists, otherwise phone routing and peer handoff
         # quietly depend on the UI layer. Claude can also drop an immediate Enter
@@ -1378,7 +1357,7 @@ def wechat_status_payload(state: WeChatTransportState | None) -> dict[str, Any]:
         "account_id": state.account_id or "-",
         "user_id": state.user_id or "-",
         "contact_count": len(state.context_tokens),
-        "bound_alias": state.bound_alias or "-",
+        "bound_target": state.bound_target or "-",
         "saved_at": state.saved_at or "-",
     }
 
@@ -1392,8 +1371,8 @@ def guard_wechat_transport_state(state: WeChatTransportState, state_path: Path |
             "@@@wechat-transport-replaced - on-disk WeChat transport was replaced by a newer login; "
             "stop this watcher and restart it against the new connection."
         )
-    if persisted.bound_alias != state.bound_alias:
-        state.bound_alias = persisted.bound_alias
+    if persisted.bound_target != state.bound_target:
+        state.bound_target = persisted.bound_target
 
 
 def wechat_connect(
@@ -1479,16 +1458,14 @@ def wechat_disconnect(state_path: Path | None = None) -> dict[str, Any]:
     return {"ok": True, "connected": False}
 
 
-def wechat_bind(state: WeChatTransportState, registry: WeChatRegistry, alias: str) -> WeChatTransportState:
-    normalized = sanitize_name(alias)
-    if normalized not in registry.peers:
-        raise CCMError(f"Unknown wechat peer alias: {normalized}")
-    state.bound_alias = normalized
+def wechat_bind(state: WeChatTransportState, target: str) -> WeChatTransportState:
+    parse_target_spec(target)
+    state.bound_target = target
     return state
 
 
 def wechat_unbind(state: WeChatTransportState) -> WeChatTransportState:
-    state.bound_alias = ""
+    state.bound_target = ""
     return state
 
 
@@ -1515,7 +1492,7 @@ def format_incoming_wechat_prompt(
     *,
     user_id: str,
     text: str,
-    bound_alias: str,
+    bound_target: str,
     reply_command: str,
     runtime: str = "",
 ) -> str:
@@ -1523,11 +1500,11 @@ def format_incoming_wechat_prompt(
         parts = [
             "Phone message for your currently bound ccm thread.",
             f"user_id: {user_id}",
-            f"bound_alias: {bound_alias}",
+            f"bound_target: {bound_target}",
             "Operator authorization: the human explicitly connected this phone thread to ccm.",
             "Replying through `ccm wechat-queue-reply` writes to the local ccm outbox first; ccm sends it afterwards.",
             f"Reply command: {reply_command}",
-            'Handoff command: ccm wechat-shift <alias> "..."',
+            'Handoff command: ccm wechat-shift <target> "..."',
             "Incoming message:",
             text,
         ]
@@ -1538,12 +1515,12 @@ def format_incoming_wechat_prompt(
         "<system-reminder>",
         "<ccm-wechat-incoming>",
         f"  <user-id>{escape(user_id)}</user-id>",
-        f"  <bound-alias>{escape(bound_alias)}</bound-alias>",
+        f"  <bound-target>{escape(bound_target)}</bound-target>",
         "</ccm-wechat-incoming>",
         "Operator authorization: this phone thread was explicitly connected to ccm by the human operator.",
         "Using `ccm wechat-reply` and `ccm wechat-shift` on this thread is the intended and authorized workflow.",
         f"To reply, use {reply_command}.",
-        "To hand work to another peer, use ccm wechat-shift <alias> \"...\".",
+        "To hand work to another peer, use ccm wechat-shift <target> \"...\".",
         "</system-reminder>",
     ]
     return "\n".join(parts)
@@ -1566,7 +1543,6 @@ def wechat_get_updates(state: WeChatTransportState) -> dict[str, Any]:
 def wechat_poll_once(
     state: WeChatTransportState,
     *,
-    registry: WeChatRegistry,
     listen_on: str | None,
 ) -> dict[str, Any]:
     sent_replies = flush_pending_wechat_replies(state)
@@ -1590,18 +1566,18 @@ def wechat_poll_once(
         if context_token:
             state.context_tokens[user_id] = context_token
         messages.append({"user_id": user_id, "text": text})
-        if not state.bound_alias:
+        if not state.bound_target:
             continue
-        target = resolve_registered_peer_target(registry, alias=state.bound_alias, listen_on=listen_on)
+        target = resolve_target_spec(state.bound_target, listen_on=listen_on, cwd=os.getcwd())
         reply_command = f'ccm wechat-reply {shlex.quote(user_id)} "..."'
         if target.runtime == "claude":
             reply_command = f'ccm wechat-queue-reply {shlex.quote(user_id)} "..."'
-        deliver_message_to_peer(
+        deliver_message_to_target(
             target,
             format_incoming_wechat_prompt(
                 user_id=user_id,
                 text=text,
-                bound_alias=state.bound_alias,
+                bound_target=state.bound_target,
                 reply_command=reply_command,
                 runtime=target.runtime,
             ),
@@ -1750,140 +1726,85 @@ def infer_runtime_label(cmdline: str, helper: str, tmux_session: str) -> str:
     return "kitty"
 
 
-def register_wechat_peer(
-    registry: WeChatRegistry,
-    *,
-    alias: str,
-    cwd: str,
-    listen_on: str | None,
-    title: str = "",
-    tmux_session: str = "",
-    runtime: str = "",
-) -> WeChatPeerRecord:
-    current = resolve_current_sender_context(cwd, listen_on)
-    normalized_alias = sanitize_name(alias)
-    effective_tmux = tmux_session or current_tmux_session_name() or current.get("helper_tmux_session", "")
-    headless_tmux_peer = bool(runtime in {"claude", "tmux"} and effective_tmux)
-    effective_title = title or current.get("title", "")
-    if not effective_title and headless_tmux_peer:
-        effective_title = normalized_alias
-    if not effective_title:
-        raise CCMError("Cannot register peer without a visible kitty tab title")
-    effective_window_id = current.get("window_id", "")
-    record = WeChatPeerRecord(
-        alias=normalized_alias,
-        title=effective_title,
-        window_id=effective_window_id,
-        worktree=current.get("worktree", namespace_cwd(cwd)),
-        repo_root=current.get("repo_root", ""),
-        branch=current.get("branch", ""),
-        tmux_session=effective_tmux,
-        helper=current.get("helper", ""),
-        helper_status=current.get("helper_status", ""),
-        helper_transcript=current.get("helper_transcript", ""),
-        runtime=runtime or infer_runtime_label(current.get("cmdline", ""), current.get("helper", ""), effective_tmux),
-        registered_at=time.time(),
+def parse_target_spec(value: str) -> WeChatTargetSpec:
+    if ":" not in value:
+        raise CCMError("Invalid target. Use 'kitty:<tab-title>' or 'tmux:<session-name>'.")
+    kind, raw = value.split(":", 1)
+    kind = kind.strip().lower()
+    raw = raw.strip()
+    if kind not in {"kitty", "tmux"} or not raw:
+        raise CCMError("Invalid target. Use 'kitty:<tab-title>' or 'tmux:<session-name>'.")
+    return WeChatTargetSpec(kind=kind, value=raw)
+
+
+def resolve_target_spec(target: str, *, listen_on: str | None, cwd: str) -> WeChatTargetRecord:
+    spec = parse_target_spec(target)
+    if spec.kind == "kitty":
+        matches = [tab for tab in list_kitty_tabs(listen_on) if tab["title"] == spec.value]
+        if not matches:
+            raise CCMError(f"No kitty tab found with title: {spec.value}")
+        if len(matches) > 1:
+            raise CCMError(f"Multiple kitty tabs found with title: {spec.value}")
+        tab = matches[0]
+        return WeChatTargetRecord(
+            target=target,
+            kind="kitty",
+            title=tab["title"],
+            window_id=tab["window_id"],
+            worktree=tab["cwd"],
+            repo_root=tab["repo_root"],
+            branch=tab["branch"],
+            tmux_session=tab["helper_tmux_session"],
+            helper=tab["helper"],
+            helper_status=tab["helper_status"],
+            helper_transcript=tab["helper_transcript"],
+            runtime=infer_runtime_label(tab["cmdline"], tab["helper"], tab["helper_tmux_session"]),
+        )
+
+    session_name = spec.value
+    if not tmux_has_session(session_name):
+        raise CCMError(f"tmux session is not live: {session_name}")
+    session_cwd = tmux_session_cwd(session_name)
+    identity = workspace_identity(session_cwd or namespace_cwd(cwd))
+    return WeChatTargetRecord(
+        target=target,
+        kind="tmux",
+        title=session_name,
+        window_id="",
+        worktree=session_cwd or namespace_cwd(cwd),
+        repo_root=identity["repo_root"],
+        branch=identity["branch"],
+        tmux_session=session_name,
+        helper=identity["helper"],
+        helper_status=identity["helper_status"],
+        helper_transcript=identity["helper_transcript"],
+        runtime=infer_runtime_label("", identity["helper"], session_name),
     )
 
-    # @@@unique-peer-binding - a visible tab should have one canonical alias in the
-    # global registry. Re-registering the same tab/window under a new alias replaces the old one.
-    for existing_alias, existing in list(registry.peers.items()):
-        if existing_alias == normalized_alias:
-            continue
-        if effective_window_id and existing.window_id == effective_window_id:
-            del registry.peers[existing_alias]
-            continue
-        if existing.title == record.title and existing.worktree == record.worktree:
-            del registry.peers[existing_alias]
-    registry.peers[normalized_alias] = record
-    return record
 
-
-def resolve_sender_alias(
-    registry: WeChatRegistry,
+def resolve_sender_target(
     *,
     cwd: str,
     listen_on: str | None,
-    explicit_alias: str = "",
-) -> str:
-    if explicit_alias:
-        normalized = sanitize_name(explicit_alias)
-        if normalized not in registry.peers:
-            raise CCMError(f"Unknown wechat peer alias: {normalized}")
-        return normalized
+    explicit_target: str = "",
+) -> WeChatTargetRecord:
+    if explicit_target:
+        return resolve_target_spec(explicit_target, listen_on=listen_on, cwd=cwd)
 
-    current = resolve_current_sender_context(cwd, listen_on)
-    current_window_id = current.get("window_id", "")
-    for alias, peer in registry.peers.items():
-        if current_window_id and peer.window_id == current_window_id:
-            return alias
     current_tmux = current_tmux_session_name()
-    for alias, peer in registry.peers.items():
-        if current_tmux and peer.tmux_session == current_tmux:
-            return alias
-    current_title = current.get("title", "")
-    current_worktree = current.get("worktree", "")
-    for alias, peer in registry.peers.items():
-        if peer.title == current_title and peer.worktree == current_worktree:
-            return alias
-    raise CCMError("Current sender is not registered. Run 'ccm wechat-register <alias>' first.")
+    if current_tmux:
+        return resolve_target_spec(f"tmux:{current_tmux}", listen_on=listen_on, cwd=cwd)
 
-
-def resolve_registered_peer_target(
-    registry: WeChatRegistry,
-    *,
-    alias: str,
-    listen_on: str | None,
-) -> WeChatPeerRecord:
-    normalized = sanitize_name(alias)
-    peer = registry.peers.get(normalized)
-    if peer is None:
-        raise CCMError(f"Unknown wechat peer alias: {normalized}")
-
-    if peer.tmux_session and peer.runtime in {"claude", "tmux"} and not peer.window_id:
-        if tmux_has_session(peer.tmux_session):
-            return peer
-        raise CCMError(f"Registered wechat peer tmux session is not live: {peer.tmux_session}")
-
-    tabs = list_kitty_tabs(listen_on)
-    if peer.window_id:
-        for tab in tabs:
-            if tab["window_id"] == peer.window_id:
-                return replace(
-                    peer,
-                    title=tab["title"],
-                    window_id=tab["window_id"],
-                    worktree=tab["cwd"],
-                    repo_root=tab["repo_root"],
-                    branch=tab["branch"],
-                    helper=tab["helper"],
-                    helper_status=tab["helper_status"],
-                    helper_transcript=tab["helper_transcript"],
-                )
-    if peer.runtime in {"claude", "tmux"} and peer.tmux_session and tmux_has_session(peer.tmux_session):
-        return peer
-    matches = [tab for tab in tabs if tab["title"] == peer.title]
-    if not matches:
-        raise CCMError(f"Registered wechat peer is not visible in kitty: {normalized}")
-    if len(matches) > 1:
-        raise CCMError(f"Multiple visible kitty tabs match wechat peer title: {peer.title}")
-    tab = matches[0]
-    return replace(
-        peer,
-        title=tab["title"],
-        window_id=tab["window_id"],
-        worktree=tab["cwd"],
-        repo_root=tab["repo_root"],
-        branch=tab["branch"],
-        helper=tab["helper"],
-        helper_status=tab["helper_status"],
-        helper_transcript=tab["helper_transcript"],
-    )
+    current = resolve_current_sender_context(cwd, listen_on)
+    title = current.get("title", "").strip()
+    if title:
+        return resolve_target_spec(f"kitty:{title}", listen_on=listen_on, cwd=cwd)
+    raise CCMError("Cannot resolve current sender target. Use --from-target explicitly.")
 
 
 def format_wechat_prompt(
     message: str,
-    sender: WeChatPeerRecord,
+    sender: WeChatTargetRecord,
     *,
     mode: str,
     task: str = "",
@@ -1895,7 +1816,7 @@ def format_wechat_prompt(
         "<system-reminder>",
         "<ccm-wechat-message>",
         f"  <mode>{escape(mode)}</mode>",
-        f"  <from-alias>{escape(sender.alias)}</from-alias>",
+        f"  <from-target>{escape(sender.target)}</from-target>",
         f"  <title>{escape(sender.title)}</title>",
         f"  <worktree>{escape(sender.worktree)}</worktree>",
         f"  <branch>{escape(sender.branch)}</branch>",
@@ -1916,8 +1837,8 @@ def format_wechat_prompt(
             "</ccm-wechat-message>",
             "Operator authorization: the human operator explicitly requested this ccm wechat handoff/message flow.",
             "Using `ccm wechat-send`, `ccm wechat-shift`, and, when instructed by the phone thread, `ccm wechat-reply` is authorized here.",
-            f'To reply, use ccm wechat-send {shlex.quote(sender.alias)} "...".',
-            f'To hand off, use ccm wechat-shift {shlex.quote(sender.alias)} "...".',
+            f'To reply, use ccm wechat-send {shlex.quote(sender.target)} "...".',
+            f'To hand off, use ccm wechat-shift {shlex.quote(sender.target)} "...".',
             "</system-reminder>",
         ]
     )
@@ -1925,29 +1846,51 @@ def format_wechat_prompt(
     return separator.join(parts)
 
 
-def wechat_contacts_payload(registry: WeChatRegistry) -> list[dict[str, str]]:
-    payload = []
-    for alias, peer in sorted(registry.peers.items()):
+def wechat_targets_payload(*, cwd: str, listen_on: str | None, all_scopes: bool = False) -> list[dict[str, str]]:
+    payload: list[dict[str, str]] = []
+    for tab in list_kitty_tabs(listen_on):
         payload.append(
             {
-                "alias": alias,
-                "title": peer.title,
-                "runtime": peer.runtime,
-                "worktree": peer.worktree,
-                "branch": peer.branch,
-                "tmux_session": peer.tmux_session,
+                "target": f"kitty:{tab['title']}",
+                "kind": "kitty",
+                "title": tab["title"],
+                "runtime": infer_runtime_label(tab["cmdline"], tab["helper"], tab["helper_tmux_session"]),
+                "worktree": tab["cwd"],
+                "branch": tab["branch"],
+                "tmux_session": tab["helper_tmux_session"],
+            }
+        )
+    session_records: list[SessionRecord] = []
+    if all_scopes:
+        for item in list_sessions_all_scopes(DEFAULT_HOME_ROOT):
+            session_records.append(
+                SessionRecord(
+                    name=item["name"],
+                    tmux_session=item["tmux_session"],
+                    display_name=item["name"],
+                    cwd=item["cwd"],
+                    started_at=0.0,
+                    transcript_path=item.get("transcript", "") or None,
+                )
+            )
+    else:
+        session_records.extend(load_state(resolve_state_path(namespace_cwd(cwd))).sessions.values())
+    for record in session_records:
+        if not tmux_has_session(record.tmux_session):
+            continue
+        identity = workspace_identity(record.cwd)
+        payload.append(
+            {
+                "target": f"tmux:{record.tmux_session}",
+                "kind": "tmux",
+                "title": record.display_name,
+                "runtime": infer_runtime_label("", identity["helper"], record.tmux_session),
+                "worktree": record.cwd,
+                "branch": identity["branch"],
+                "tmux_session": record.tmux_session,
             }
         )
     return payload
-
-
-def unregister_wechat_peer(registry: WeChatRegistry, alias: str) -> WeChatPeerRecord:
-    normalized = sanitize_name(alias)
-    peer = registry.peers.get(normalized)
-    if peer is None:
-        raise CCMError(f"Unknown wechat peer alias: {normalized}")
-    del registry.peers[normalized]
-    return peer
 
 
 def render_wechat_guide(audience: str) -> str:
@@ -1958,24 +1901,23 @@ def render_wechat_guide(audience: str) -> str:
 
             This project uses two different things called "wechat":
             1. Real phone WeChat onboarding through ccm's direct iLink transport
-            2. ccm's wechat-style peer layer for stable alias-based tab handoff
+            2. ccm's wechat-style peer layer for direct target-based handoff
 
             For phone onboarding:
             - ccm wechat-connect
             - Scan the QR code with your phone
-            - ccm wechat-register <alias>   (or add --runtime claude --tmux-session <session> for a headless tmux peer)
-            - ccm wechat-bind <alias>
+            - ccm wechat-bind kitty:<tab-title>   (or tmux:<session-name> for a headless helper)
             - ccm wechat-watch --detach
             - ccm wechat-watch-status
             - ccm wechat-reply <user_id> "..."
 
             Handoff rule:
-            - `ccm wechat-shift <alias> "..."` is not just a note. If the sender currently owns the phone thread, shift also moves phone ownership to the target alias.
+            - `ccm wechat-shift <target> "..."` is not just a note. If the sender currently owns the phone thread, shift also moves phone ownership to the target.
 
             For peer coordination after that:
-            - ccm wechat-register <alias>
-            - ccm wechat-contacts
-            - ccm wechat-send <alias> "..."
+            - ccm wechat-targets
+            - ccm wechat-send kitty:<tab-title> "..."
+            - ccm wechat-send tmux:<session-name> "..."
             """
         ).strip()
 
@@ -1988,23 +1930,23 @@ def render_wechat_guide(audience: str) -> str:
 
         There are two layers here:
         - Phone WeChat onboarding now has a real direct ccm transport path.
-        - ccm's wechat-style peer layer handles alias-based tab messaging and handoff.
+        - ccm's wechat-style peer layer handles direct target-based messaging and handoff.
 
         If the user says "connect WeChat to you so I can message you from my phone", do this:
         1. Run `ccm wechat-connect` and let it render/open a QR code.
         2. Tell them to scan the QR code with their phone.
-        3. Register the recipient peer with `ccm wechat-register <alias>`.
-           - For a visible kitty tab, run it inside that tab.
-           - For a headless Claude/tmux helper, run `ccm wechat-register <alias> --runtime claude --tmux-session <session>` from inside that tmux session.
-        4. Run `ccm wechat-bind <alias>`.
+        3. Choose one direct target:
+           - visible tab: `kitty:<tab-title>`
+           - headless helper: `tmux:<session-name>`
+        4. Run `ccm wechat-bind <target>`.
         5. Run `ccm wechat-watch --detach`.
         6. Check `ccm wechat-watch-status`.
-        7. If the user scans again later, run `ccm wechat-bind <alias>` again after the new `ccm wechat-connect`.
+        7. If the user scans again later, run `ccm wechat-bind <target>` again after the new `ccm wechat-connect`.
 
         Phone-layer commands:
         - `ccm wechat-connect` requests a real WeChat QR code and polls until confirmed.
         - `ccm wechat-status` shows the global transport state.
-        - `ccm wechat-bind <alias>` binds incoming phone messages to one registered peer alias.
+        - `ccm wechat-bind <target>` binds incoming phone messages to one direct target.
         - `ccm wechat-unbind` clears that binding.
         - `ccm wechat-users` lists known phone users who have messaged the bot.
         - `ccm wechat-reply <user_id> "..."` replies to a phone user.
@@ -2015,14 +1957,12 @@ def render_wechat_guide(audience: str) -> str:
         - `ccm wechat-disconnect` disconnects the phone-side WeChat session.
 
         Peer-layer commands:
-        - `ccm wechat-register <alias>` binds the current visible tab or current tmux helper to a stable alias.
-        - `ccm wechat-contacts` lists registered peers.
-        - `ccm wechat-send <alias> "..."` sends a reply-friendly message.
-        - `ccm wechat-shift <alias> "..."` hands work off. If the sender currently owns the phone thread, shift also rebinds phone ownership to the target alias and sends a handoff notice back to the phone user.
-        - `ccm wechat-unregister <alias>` removes a stale alias.
+        - `ccm wechat-targets` lists addressable targets such as `kitty:<tab-title>` and `tmux:<session-name>`.
+        - `ccm wechat-send <target> "..."` sends a reply-friendly message.
+        - `ccm wechat-shift <target> "..."` hands work off. If the sender currently owns the phone thread, shift also rebinds phone ownership to the target and sends a handoff notice back to the phone user.
 
         Routing principle:
-        - Phone WeChat messages reach ccm through the direct transport and then get delivered to the bound alias.
+        - Phone WeChat messages reach ccm through the direct transport and then get delivered to the bound target.
         - ccm wechat messages reach visible tabs directly through kitty.
         - A stale watcher must not overwrite a newer phone login; reconnect, re-bind, then restart the watcher.
         - Do not confuse those two paths.
@@ -2031,30 +1971,27 @@ def render_wechat_guide(audience: str) -> str:
 
 
 def wechat_send_to_peer(
-    registry: WeChatRegistry,
     *,
-    alias: str,
+    target: str,
     message: str,
     listen_on: str | None,
     cwd: str,
     mode: str,
     task: str = "",
     scene: str = "",
-    from_alias: str = "",
+    from_target: str = "",
     transport: WeChatTransportState | None = None,
 ) -> dict[str, str]:
-    sender_alias = resolve_sender_alias(
-        registry,
+    sender = resolve_sender_target(
         cwd=cwd,
         listen_on=listen_on,
-        explicit_alias=from_alias,
+        explicit_target=from_target,
     )
-    sender = registry.peers[sender_alias]
-    target = resolve_registered_peer_target(registry, alias=alias, listen_on=listen_on)
+    target_record = resolve_target_spec(target, listen_on=listen_on, cwd=cwd)
     phone_handoff = False
     handoff_user_id = ""
-    if transport is not None and mode == "shift" and transport.bound_alias == sender.alias:
-        wechat_bind(transport, registry, target.alias)
+    if transport is not None and mode == "shift" and transport.bound_target == sender.target:
+        wechat_bind(transport, target_record.target)
         phone_handoff = True
         handoff_user_id = active_wechat_user_id(transport)
     rendered = format_wechat_prompt(
@@ -2063,19 +2000,19 @@ def wechat_send_to_peer(
         mode=mode,
         task=task or sender.branch,
         scene=scene,
-        compact=target.runtime == "claude",
+        compact=target_record.runtime == "claude",
     )
-    payload = deliver_message_to_peer(target, rendered, listen_on)
+    payload = deliver_message_to_target(target_record, rendered, listen_on)
     if phone_handoff:
-        notice = f"Phone thread transferred to {target.alias}. Keep messaging here as usual."
+        notice = f"Phone thread transferred to {target_record.target}. Keep messaging here as usual."
         wechat_reply(transport, user_id=handoff_user_id, text=notice)
-    payload["from_alias"] = sender.alias
-    payload["to_alias"] = target.alias
-    payload["reply_via"] = f'ccm wechat-send {shlex.quote(sender.alias)} "..."'
-    payload["shift_via"] = f'ccm wechat-shift {shlex.quote(sender.alias)} "..."'
+    payload["from_target"] = sender.target
+    payload["to_target"] = target_record.target
+    payload["reply_via"] = f'ccm wechat-send {shlex.quote(sender.target)} "..."'
+    payload["shift_via"] = f'ccm wechat-shift {shlex.quote(sender.target)} "..."'
     if phone_handoff:
         payload["phone_handoff"] = "true"
-        payload["phone_bound_alias"] = transport.bound_alias
+        payload["phone_bound_target"] = transport.bound_target
         payload["phone_notice_user_id"] = handoff_user_id
     return payload
 
@@ -2222,10 +2159,10 @@ def render_guide(audience: str) -> str:
         - Do not expect `read` to wake another agent tab for you.
 
         Wechat-style peer layer:
-        - Use `ccm wechat-register <alias>` to bind the current visible tab to a stable alias.
-        - Use `ccm wechat-contacts` to list registered peers.
-        - Use `ccm wechat-send <alias> "..."` for a reply-friendly message.
-        - Use `ccm wechat-shift <alias> "..."` when you want to hand work off.
+        - Use direct targets such as `kitty:<tab-title>` and `tmux:<session-name>`.
+        - Use `ccm wechat-targets` to inspect what is addressable right now.
+        - Use `ccm wechat-send <target> "..."` for a reply-friendly message.
+        - Use `ccm wechat-shift <target> "..."` when you want to hand work off.
 
         Recommended operating pattern:
         - Each visible Codex tab should usually keep one dedicated, trusted, long-lived Claude
@@ -2417,9 +2354,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     wechat_bind_parser = subparsers.add_parser(
         "wechat-bind",
-        help="phone wechat layer: bind incoming phone messages to one registered peer alias",
+        help="phone wechat layer: bind incoming phone messages to one direct target",
     )
-    wechat_bind_parser.add_argument("alias")
+    wechat_bind_parser.add_argument("target")
 
     subparsers.add_parser(
         "wechat-unbind",
@@ -2469,58 +2406,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="phone wechat layer: stop the background watcher",
     )
 
-    wechat_register_parser = subparsers.add_parser(
-        "wechat-register",
-        help="Register the current visible tab or current tmux helper as a named peer for reply-friendly handoff",
-        description=(
-            "Bind the current kitty tab or current tmux helper, worktree, and optional tmux session to a stable alias. "
-            "This works for Codex, Claude, or any other agent running in a visible tab or headless tmux session."
-        ),
+    wechat_targets_parser = subparsers.add_parser(
+        "wechat-targets",
+        help="List direct wechat targets such as visible kitty tabs and managed tmux helpers",
     )
-    wechat_register_parser.add_argument("alias")
-    wechat_register_parser.add_argument("--listen-on")
-    wechat_register_parser.add_argument("--title", default="")
-    wechat_register_parser.add_argument("--tmux-session", default="")
-    wechat_register_parser.add_argument("--runtime", default="")
-
-    subparsers.add_parser(
-        "wechat-contacts",
-        help="List registered peers in the global wechat-style registry",
-    )
-
-    wechat_unregister_parser = subparsers.add_parser(
-        "wechat-unregister",
-        help="Remove a peer alias from the global wechat-style registry",
-    )
-    wechat_unregister_parser.add_argument("alias")
+    wechat_targets_parser.add_argument("--listen-on")
+    wechat_targets_parser.add_argument("--all-scopes", action="store_true")
 
     wechat_send_parser = subparsers.add_parser(
         "wechat-send",
-        help="Send a wechat-style message to a registered peer with reply instructions",
+        help="Send a wechat-style message to a direct target with reply instructions",
     )
-    wechat_send_parser.add_argument("alias")
+    wechat_send_parser.add_argument("target")
     wechat_send_parser.add_argument("message")
     wechat_send_parser.add_argument("--listen-on")
     wechat_send_parser.add_argument("--task", default="")
     wechat_send_parser.add_argument("--scene", default="")
-    wechat_send_parser.add_argument("--from-alias", default="")
+    wechat_send_parser.add_argument("--from-target", default="")
 
     wechat_shift_parser = subparsers.add_parser(
         "wechat-shift",
-        help="Hand work off to a registered peer; if you currently own the phone thread, shift also rebinds phone ownership",
+        help="Hand work off to a direct target; if you currently own the phone thread, shift also rebinds phone ownership",
         description=(
-            "Send a stronger handoff prompt to a registered peer. "
-            "If the current sender alias also owns the phone WeChat thread, "
-            "this command moves phone ownership to the target alias as part of the same shift "
+            "Send a stronger handoff prompt to a direct target such as `kitty:<tab-title>` or `tmux:<session-name>`. "
+            "If the current sender target also owns the phone WeChat thread, "
+            "this command moves phone ownership to the target as part of the same shift "
             "and sends a handoff notice back to the phone user."
         ),
     )
-    wechat_shift_parser.add_argument("alias")
+    wechat_shift_parser.add_argument("target")
     wechat_shift_parser.add_argument("message")
     wechat_shift_parser.add_argument("--listen-on")
     wechat_shift_parser.add_argument("--task", default="")
     wechat_shift_parser.add_argument("--scene", default="")
-    wechat_shift_parser.add_argument("--from-alias", default="")
+    wechat_shift_parser.add_argument("--from-target", default="")
 
     wechat_guide_parser = subparsers.add_parser(
         "wechat-guide",
@@ -2562,8 +2481,6 @@ def main(argv: list[str] | None = None) -> int:
     cwd = namespace_cwd(args.cwd)
     state_path = resolve_state_path(cwd, args.state_path)
     state = load_state(state_path)
-    wechat_path = wechat_registry_path()
-    wechat_registry = load_wechat_registry(wechat_path)
     wechat_transport_path = wechat_transport_state_path()
     wechat_transport = load_wechat_transport_state(wechat_transport_path)
 
@@ -2691,7 +2608,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "wechat-bind":
-            current_transport = wechat_bind(require_wechat_transport_state(wechat_transport), wechat_registry, args.alias)
+            current_transport = wechat_bind(require_wechat_transport_state(wechat_transport), args.target)
             save_wechat_transport_state(current_transport, wechat_transport_path)
             emit(wechat_status_payload(current_transport), as_json=args.json)
             return 0
@@ -2722,7 +2639,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "wechat-poll-once":
             current_transport = require_wechat_transport_state(wechat_transport)
-            payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
+            payload = wechat_poll_once(current_transport, listen_on=args.listen_on)
             save_wechat_transport_state_guarded(current_transport, wechat_transport_path)
             emit(payload, as_json=args.json)
             return 0
@@ -2745,7 +2662,7 @@ def main(argv: list[str] | None = None) -> int:
                         status="running",
                         heartbeat_at=poll_at,
                     )
-                    payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
+                    payload = wechat_poll_once(current_transport, listen_on=args.listen_on)
                     save_wechat_transport_state_guarded(current_transport, wechat_transport_path)
                     heartbeat_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     save_wechat_watch_state(
@@ -2779,42 +2696,21 @@ def main(argv: list[str] | None = None) -> int:
             emit(wechat_watch_stop(), as_json=args.json)
             return 0
 
-        if args.command == "wechat-register":
-            record = register_wechat_peer(
-                wechat_registry,
-                alias=args.alias,
-                cwd=cwd,
-                listen_on=args.listen_on,
-                title=args.title,
-                tmux_session=args.tmux_session,
-                runtime=args.runtime,
-            )
-            save_wechat_registry(wechat_registry, wechat_path)
-            emit(asdict(record), as_json=args.json)
-            return 0
-
-        if args.command == "wechat-contacts":
-            emit(wechat_contacts_payload(wechat_registry), as_json=args.json)
-            return 0
-
-        if args.command == "wechat-unregister":
-            record = unregister_wechat_peer(wechat_registry, args.alias)
-            save_wechat_registry(wechat_registry, wechat_path)
-            emit(asdict(record), as_json=args.json)
+        if args.command == "wechat-targets":
+            emit(wechat_targets_payload(cwd=cwd, listen_on=args.listen_on, all_scopes=args.all_scopes), as_json=args.json)
             return 0
 
         if args.command == "wechat-send":
             emit(
                 wechat_send_to_peer(
-                    wechat_registry,
-                    alias=args.alias,
+                    target=args.target,
                     message=args.message,
                     listen_on=args.listen_on,
                     cwd=cwd,
                     mode="send",
                     task=args.task,
                     scene=args.scene,
-                    from_alias=args.from_alias,
+                    from_target=args.from_target,
                     transport=None,
                 ),
                 as_json=args.json,
@@ -2824,15 +2720,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "wechat-shift":
             current_transport = require_wechat_transport_state(wechat_transport) if wechat_transport is not None else None
             payload = wechat_send_to_peer(
-                wechat_registry,
-                alias=args.alias,
+                target=args.target,
                 message=args.message,
                 listen_on=args.listen_on,
                 cwd=cwd,
                 mode="shift",
                 task=args.task,
                 scene=args.scene,
-                from_alias=args.from_alias,
+                from_target=args.from_target,
                 transport=current_transport,
             )
             if current_transport is not None and payload.get("phone_handoff") == "true":
