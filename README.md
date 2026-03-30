@@ -2,6 +2,8 @@
 
 [中文说明](./README.zh-CN.md)
 
+This project is promoted through [linux.do](https://linux.do/).
+
 `ccm-orchestra` is a control plane for running persistent, interactive Claude Code helpers in `tmux` and coordinating visible collaboration through `kitty`. Together they form a paired operating model: `tmux` keeps the helper alive and reusable, `kitty` makes the collaboration visible and relay-capable.
 
 The core loop is simple: start a helper in a detached tmux pane, send it prompts, and read its transcript. Sessions are isolated by working directory, so the same helper name can coexist across repos. Together, the `tmux` layer and the `kitty` layer let Claude Code and Codex work in parallel, hand work back and forth, and stay observable when needed.
