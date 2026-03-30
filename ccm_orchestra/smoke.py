@@ -12,15 +12,20 @@ DEFAULT_HELPER_NAME = "smoke-helper"
 DEFAULT_READ_WAIT_SECONDS = 20.0
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def build_parser(*, prog: str = "ccm-smoke") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Run a live ccm smoke check against the current environment.",
     )
     parser.add_argument("--cwd", default=str(Path.cwd()), help="Namespace/worktree to smoke check.")
     parser.add_argument("--helper-name", default=DEFAULT_HELPER_NAME)
     parser.add_argument("--read-wait-seconds", type=float, default=DEFAULT_READ_WAIT_SECONDS)
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
-    return parser.parse_args(argv)
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def run_cli(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:

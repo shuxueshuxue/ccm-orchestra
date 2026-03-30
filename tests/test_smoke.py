@@ -11,6 +11,12 @@ def completed(*, stdout: str = "", stderr: str = "", returncode: int = 0) -> sub
 
 
 class SmokeCheckTests(unittest.TestCase):
+    def test_parse_args_uses_ccm_smoke_prog_name(self):
+        with mock.patch("sys.argv", ["ccm-smoke"]):
+            args = smoke.parse_args()
+
+        self.assertEqual(args.helper_name, smoke.DEFAULT_HELPER_NAME)
+
     @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
     def test_run_smoke_happy_path_reads_probe_token_and_returns_summary(self, run_cli):
         token = "CCM_SMOKE_ACK_TEST"

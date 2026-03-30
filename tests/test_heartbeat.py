@@ -7,6 +7,12 @@ from ccm_orchestra import heartbeat as heartbeat
 
 
 class HeartbeatPathTests(unittest.TestCase):
+    def test_parse_args_uses_codex_heartbeat_prog_name(self):
+        with mock.patch("sys.argv", ["codex-heartbeat", "status"]):
+            args = heartbeat.parse_args()
+
+        self.assertEqual(args.command, "status")
+
     def test_state_paths_are_scoped_by_tab_title_slug(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(heartbeat, "STATE_DIR", Path(tmp)):
             pid_path = heartbeat.heartbeat_pid_path("Feature Main")

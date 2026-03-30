@@ -410,6 +410,11 @@ class MainDispatchTests(unittest.TestCase):
 
 
 class ParserHelpTests(unittest.TestCase):
+    def test_root_parser_uses_ccm_prog_name(self):
+        parser = ccm.build_parser()
+
+        self.assertEqual(parser.prog, "ccm")
+
     def test_root_help_mentions_daily_loop_and_open_exception(self):
         help_text = ccm.build_parser().format_help()
 
@@ -1176,12 +1181,26 @@ class WeChatPhoneTests(unittest.TestCase):
              ), \
              mock.patch("ccm_orchestra.cli.pid_is_running", return_value=True):
             Path(tmp, "watch.pid").write_text("43210\n")
-            Path(tmp, "watch.json").write_text(json.dumps({"pid": 43210, "heartbeat_at": "2026-03-30T08:00:00Z", "last_error": ""}))
+            Path(tmp, "watch.json").write_text(
+                json.dumps(
+                    {
+                        "pid": 43210,
+                        "heartbeat_at": "2026-03-30T08:00:00Z",
+                        "last_error": "",
+                        "last_poll_at": "2026-03-30T08:00:01Z",
+                        "last_delivery_at": "2026-03-30T08:00:02Z",
+                        "last_flush_at": "2026-03-30T08:00:03Z",
+                    }
+                )
+            )
             payload = ccm.wechat_watch_status()
 
         self.assertTrue(payload["running"])
         self.assertEqual(payload["pid"], 43210)
         self.assertEqual(payload["heartbeat_at"], "2026-03-30T08:00:00Z")
+        self.assertEqual(payload["last_poll_at"], "2026-03-30T08:00:01Z")
+        self.assertEqual(payload["last_delivery_at"], "2026-03-30T08:00:02Z")
+        self.assertEqual(payload["last_flush_at"], "2026-03-30T08:00:03Z")
         self.assertEqual(payload["last_error"], "")
 
     @mock.patch("ccm_orchestra.cli.os.kill", autospec=True)

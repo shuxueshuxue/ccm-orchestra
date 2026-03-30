@@ -34,8 +34,9 @@ def heartbeat_log_path(tab_title: str) -> Path:
     return STATE_DIR / f"{slugify_tab_title(tab_title)}.log"
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser(*, prog: str = "codex-heartbeat") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description=(
             "Keep a Codex kitty tab awake via kitty. "
             "Use --tab-title to target a non-main tab, or 'test' for a one-shot push."
@@ -68,7 +69,11 @@ def parse_args() -> argparse.Namespace:
     status.add_argument("--tab-title", default=DEFAULT_TAB_TITLE)
     status.add_argument("--pid-file")
 
-    return parser.parse_args()
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def read_pid(pid_path: Path) -> int | None:

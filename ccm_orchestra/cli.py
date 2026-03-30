@@ -375,6 +375,9 @@ def save_wechat_watch_state(
     status: str,
     heartbeat_at: str = "",
     last_error: str = "",
+    last_poll_at: str = "",
+    last_delivery_at: str = "",
+    last_flush_at: str = "",
     path: Path | None = None,
 ) -> None:
     path = path or wechat_watch_state_path()
@@ -386,6 +389,9 @@ def save_wechat_watch_state(
                 "status": status,
                 "heartbeat_at": heartbeat_at,
                 "last_error": last_error,
+                "last_poll_at": last_poll_at,
+                "last_delivery_at": last_delivery_at,
+                "last_flush_at": last_flush_at,
             },
             indent=2,
             sort_keys=True,
@@ -1714,6 +1720,9 @@ def wechat_watch_status() -> dict[str, Any]:
         "watch_status": state.get("status", ""),
         "heartbeat_at": state.get("heartbeat_at", ""),
         "last_error": state.get("last_error", ""),
+        "last_poll_at": state.get("last_poll_at", ""),
+        "last_delivery_at": state.get("last_delivery_at", ""),
+        "last_flush_at": state.get("last_flush_at", ""),
     }
 
 
@@ -2258,6 +2267,7 @@ def render_guide(audience: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
+        prog="ccm",
         description=(
             "Manage interactive Claude Code sessions for Codex. tmux is the persistent "
             "session layer; kitty is the optional visible collaboration layer."
@@ -2729,17 +2739,22 @@ def main(argv: list[str] | None = None) -> int:
             while True:
                 guard_wechat_transport_state(current_transport, wechat_transport_path)
                 try:
+                    poll_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     save_wechat_watch_state(
                         pid=current_pid,
                         status="running",
-                        heartbeat_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        heartbeat_at=poll_at,
                     )
                     payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
                     save_wechat_transport_state_guarded(current_transport, wechat_transport_path)
+                    heartbeat_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     save_wechat_watch_state(
                         pid=current_pid,
                         status="running",
-                        heartbeat_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        heartbeat_at=heartbeat_at,
+                        last_poll_at=heartbeat_at,
+                        last_delivery_at=heartbeat_at if payload["delivered_count"] else "",
+                        last_flush_at=heartbeat_at if payload["sent_replies"] else "",
                     )
                 except CCMError as exc:
                     save_wechat_watch_state(
