@@ -150,7 +150,7 @@ ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 
 ### Use visible kitty tabs as peers
 
-This is the optional `kitty` layer, not the core session path.
+`kitty` is the visible collaboration layer. It is not the helper runtime itself, but it is a first-class part of the system when humans, Codex, and Claude need to watch each other and exchange messages live.
 
 ```bash
 ccm tabs --listen-on unix:/tmp/mykitty
@@ -180,6 +180,53 @@ ccm wechat-shift scheduled-tasks "Take ownership of the next frontend simplify p
 ```
 
 `wechat-send` and `wechat-shift` wrap the message with a system-style reminder that says how to reply, for example with `ccm wechat-send mycel "..."`. Register each tab under a specific alias and avoid collisions.
+
+### Phone WeChat onboarding is a different path
+
+If the user says "connect WeChat to you so I can message you from my phone", do not confuse that with the peer layer above.
+
+Use the real CLI flow:
+
+```bash
+ccm wechat-connect
+ccm wechat-status
+ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-bind mycel
+ccm wechat-watch --detach --listen-on "${KITTY_LISTEN_ON}"
+ccm wechat-watch-status
+```
+
+What that does:
+
+- `wechat-connect` talks directly to the WeChat iLink transport, requests a real QR code, renders it into a PNG, and can open it so the user can scan with their phone.
+- `wechat-status` confirms whether the global phone-side WeChat transport is connected.
+- `wechat-bind` chooses which registered peer alias receives incoming phone messages.
+- `wechat-watch --detach` starts the canonical background watcher inside `ccm` itself. Do not rely on ad-hoc shell background jobs for long-lived phone delivery.
+- `wechat-watch-status` shows whether that watcher is still alive.
+
+After that phone-side path is ready, `ccm`'s wechat-style peer layer can still be used for tab-to-tab coordination.
+
+Operational rules that matter in practice:
+
+- After every new `wechat-connect`, run `ccm wechat-bind <alias>` again. A new login creates a new transport session; do not assume the old binding still points at the right live connection.
+- If a watcher was started against an older WeChat session, stop it and start a fresh one after reconnecting. `ccm` now refuses to let a stale watcher overwrite a newer transport state.
+- Use `ccm wechat-poll-once` for debugging or one-shot delivery. Use `ccm wechat-watch --detach` for the real ongoing path.
+
+Use this when you need the longer script:
+
+```bash
+ccm wechat-guide agent
+```
+
+Useful cleanup:
+
+```bash
+ccm wechat-disconnect
+ccm wechat-unbind
+ccm wechat-users
+ccm wechat-reply <user_id> "..."
+ccm wechat-watch-stop
+```
 
 ### Keep the supervising Codex tab alive
 

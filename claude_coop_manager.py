@@ -9,10 +9,13 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import textwrap
 import time
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from html import escape
@@ -27,6 +30,15 @@ DEFAULT_CLAUDE_PROJECTS_ROOT = Path(
 ).expanduser()
 READY_DELAY_SECONDS = 2.0
 DEFAULT_READY_TIMEOUT_SECONDS = 300.0
+WECHAT_DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
+WECHAT_BOT_TYPE = "3"
+WECHAT_CHANNEL_VERSION = "0.1.0"
+WECHAT_LONG_POLL_TIMEOUT_SECONDS = 35.0
+WECHAT_SEND_TIMEOUT_SECONDS = 15.0
+WECHAT_MSG_TYPE_USER = 1
+WECHAT_MSG_TYPE_BOT = 2
+WECHAT_MSG_ITEM_TEXT = 1
+WECHAT_MSG_STATE_FINISH = 2
 
 
 class CCMError(RuntimeError):
@@ -71,6 +83,18 @@ class WeChatPeerRecord:
 class WeChatRegistry:
     version: int = STATE_VERSION
     peers: dict[str, WeChatPeerRecord] = field(default_factory=dict)
+
+
+@dataclass
+class WeChatTransportState:
+    token: str
+    base_url: str = WECHAT_DEFAULT_BASE_URL
+    account_id: str = ""
+    user_id: str = ""
+    saved_at: str = ""
+    sync_buf: str = ""
+    context_tokens: dict[str, str] = field(default_factory=dict)
+    bound_alias: str = ""
 
 
 def sanitize_name(name: str) -> str:
@@ -133,6 +157,49 @@ def wechat_registry_path() -> Path:
     if "CCM_WECHAT_REGISTRY_PATH" in os.environ:
         return Path(os.environ["CCM_WECHAT_REGISTRY_PATH"]).expanduser()
     return DEFAULT_HOME_ROOT / "wechat-registry.json"
+
+
+def wechat_transport_state_path() -> Path:
+    if "CCM_WECHAT_TRANSPORT_PATH" in os.environ:
+        return Path(os.environ["CCM_WECHAT_TRANSPORT_PATH"]).expanduser()
+    if "CCM_WECHAT_AUTH_PATH" in os.environ:
+        return Path(os.environ["CCM_WECHAT_AUTH_PATH"]).expanduser()
+    return DEFAULT_HOME_ROOT / "wechat-transport.json"
+
+
+def wechat_qr_output_path() -> Path:
+    if "CCM_WECHAT_QR_PATH" in os.environ:
+        return Path(os.environ["CCM_WECHAT_QR_PATH"]).expanduser()
+    return DEFAULT_HOME_ROOT / "wechat" / "current-qr.png"
+
+
+def wechat_watch_pid_path() -> Path:
+    if "CCM_WECHAT_WATCH_PID_PATH" in os.environ:
+        return Path(os.environ["CCM_WECHAT_WATCH_PID_PATH"]).expanduser()
+    return DEFAULT_HOME_ROOT / "wechat-watch.pid"
+
+
+def wechat_watch_log_path() -> Path:
+    if "CCM_WECHAT_WATCH_LOG_PATH" in os.environ:
+        return Path(os.environ["CCM_WECHAT_WATCH_LOG_PATH"]).expanduser()
+    return DEFAULT_HOME_ROOT / "wechat-watch.log"
+
+
+def pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def load_pid_file(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    raw = path.read_text().strip()
+    if not raw:
+        return None
+    return int(raw)
 
 
 def build_tmux_session_name(name: str, cwd: str) -> str:
@@ -221,6 +288,14 @@ def load_wechat_registry(path: Path | None = None) -> WeChatRegistry:
     return WeChatRegistry(version=data.get("version", STATE_VERSION), peers=peers)
 
 
+def load_wechat_transport_state(path: Path | None = None) -> WeChatTransportState | None:
+    path = path or wechat_transport_state_path()
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    return WeChatTransportState(**data)
+
+
 def save_state(state: State, state_path: Path | None = None) -> None:
     state_path = state_path or default_state_path()
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -239,6 +314,18 @@ def save_wechat_registry(registry: WeChatRegistry, path: Path | None = None) -> 
         "peers": {alias: asdict(record) for alias, record in registry.peers.items()},
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def save_wechat_transport_state(state: WeChatTransportState, path: Path | None = None) -> None:
+    path = path or wechat_transport_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(asdict(state), indent=2, sort_keys=True) + "\n")
+
+
+def clear_wechat_transport_state(path: Path | None = None) -> None:
+    path = path or wechat_transport_state_path()
+    if path.exists():
+        path.unlink()
 
 
 def read_incremental_jsonl(path: Path, offset: int, buffer: str) -> tuple[list[dict[str, Any]], int, str]:
@@ -1002,6 +1089,405 @@ def relay_message_to_kitty_tab(
     return payload
 
 
+def normalize_base_url(base_url: str) -> str:
+    normalized = base_url.strip()
+    if not normalized:
+        raise CCMError("Base URL cannot be empty")
+    return normalized.rstrip("/")
+
+
+def _random_wechat_uin() -> str:
+    return hashlib.sha1(os.urandom(16)).hexdigest()[:12]
+
+
+def wechat_headers(token: str = "", *, body: str = "") -> dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "AuthorizationType": "ilink_bot_token",
+        "X-WECHAT-UIN": _random_wechat_uin(),
+    }
+    if body:
+        headers["Content-Length"] = str(len(body.encode("utf-8")))
+    if token:
+        headers["Authorization"] = f"Bearer {token.strip()}"
+    return headers
+
+
+def wechat_http_json(
+    method: str,
+    url: str,
+    *,
+    token: str = "",
+    body: dict[str, Any] | None = None,
+    timeout: float = 20.0,
+    timeout_returns_wait: bool = False,
+) -> dict[str, Any]:
+    raw_body = "" if body is None else json.dumps(body)
+    encoded_body = None if body is None else raw_body.encode("utf-8")
+    headers = wechat_headers(token, body=raw_body)
+    request = urllib.request.Request(url, data=encoded_body, headers=headers, method=method.upper())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            payload = response.read().decode("utf-8")
+    except TimeoutError as exc:
+        if timeout_returns_wait:
+            return {"status": "wait"}
+        raise CCMError(f"WeChat transport timed out after {timeout:.1f}s") from exc
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        raise CCMError(f"WeChat transport HTTP {exc.code}: {detail or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        if timeout_returns_wait and "timed out" in str(exc.reason).lower():
+            return {"status": "wait"}
+        raise CCMError(f"Failed to reach WeChat transport endpoint: {exc.reason}") from exc
+    try:
+        return json.loads(payload) if payload else {}
+    except json.JSONDecodeError as exc:
+        raise CCMError(f"Invalid JSON from WeChat transport: {payload[:200]}") from exc
+
+
+def render_qr_png(content: str, output_path: Path | None = None) -> Path:
+    output_path = output_path or wechat_qr_output_path()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    script = textwrap.dedent(
+        f"""
+        import Foundation
+        import CoreImage
+        import AppKit
+
+        let content = {json.dumps(content)}
+        let outputPath = {json.dumps(str(output_path))}
+        guard let data = content.data(using: .utf8) else {{
+            fputs("Failed to encode QR content\\n", stderr)
+            Foundation.exit(1)
+        }}
+        let filter = CIFilter(name: "CIQRCodeGenerator")!
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let image = filter.outputImage else {{
+            fputs("CIQRCodeGenerator returned no output\\n", stderr)
+            Foundation.exit(1)
+        }}
+        let scaled = image.transformed(by: CGAffineTransform(scaleX: 12, y: 12))
+        let rep = NSCIImageRep(ciImage: scaled)
+        let nsImage = NSImage(size: rep.size)
+        nsImage.addRepresentation(rep)
+        guard let tiff = nsImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else {{
+            fputs("Failed to convert QR image to PNG\\n", stderr)
+            Foundation.exit(1)
+        }}
+        try png.write(to: URL(fileURLWithPath: outputPath))
+        print(outputPath)
+        """
+    ).strip()
+    # @@@macos-qr-render - backend returns a WeChat URL, not a ready-made bitmap.
+    # CoreImage keeps the CLI dependency-light while still producing a real scannable code.
+    result = subprocess.run(
+        ["swift", "-e", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise CCMError(f"Failed to render QR code: {(result.stderr or result.stdout).strip()}")
+    if not output_path.exists():
+        raise CCMError(f"QR render reported success but file is missing: {output_path}")
+    return output_path
+
+
+def open_qr_preview(path: Path) -> None:
+    result = subprocess.run(["open", str(path)], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise CCMError(f"Failed to open QR preview: {(result.stderr or result.stdout).strip()}")
+
+
+def require_wechat_transport_state(state: WeChatTransportState | None) -> WeChatTransportState:
+    if state is None or not state.token:
+        raise CCMError("No saved WeChat transport state. Run 'ccm wechat-connect' first.")
+    return state
+
+
+def wechat_status_payload(state: WeChatTransportState | None) -> dict[str, Any]:
+    if state is None or not state.token:
+        return {"connected": False}
+    return {
+        "connected": True,
+        "base_url": state.base_url,
+        "account_id": state.account_id or "-",
+        "user_id": state.user_id or "-",
+        "contact_count": len(state.context_tokens),
+        "bound_alias": state.bound_alias or "-",
+        "saved_at": state.saved_at or "-",
+    }
+
+
+def guard_wechat_transport_state(state: WeChatTransportState, state_path: Path | None) -> None:
+    persisted = load_wechat_transport_state(state_path)
+    if persisted is None:
+        return
+    if persisted.token and persisted.token != state.token:
+        raise CCMError(
+            "@@@wechat-transport-replaced - on-disk WeChat transport was replaced by a newer login; "
+            "stop this watcher and restart it against the new connection."
+        )
+
+
+def wechat_connect(
+    *,
+    state_path: Path | None = None,
+    open_preview: bool,
+    poll_interval: float,
+    wait_seconds: float,
+    qrcode: str | None = None,
+) -> dict[str, Any]:
+    qr_content = ""
+    qr_path: Path | None = None
+    if qrcode:
+        qrcode = str(qrcode)
+    else:
+        qr_payload = wechat_http_json(
+            "GET",
+            f"{WECHAT_DEFAULT_BASE_URL}/ilink/bot/get_bot_qrcode?bot_type={WECHAT_BOT_TYPE}",
+            timeout=10.0,
+        )
+        qrcode = str(qr_payload.get("qrcode", ""))
+        qr_content = str(qr_payload.get("qrcode_img_content", ""))
+        if not qrcode or not qr_content:
+            raise CCMError(f"Unexpected WeChat QR response: {qr_payload}")
+        qr_path = render_qr_png(qr_content)
+        if open_preview:
+            open_qr_preview(qr_path)
+    deadline = time.time() + wait_seconds if wait_seconds > 0 else None
+    history: list[str] = []
+    last_status = "wait"
+    account_id = ""
+    while True:
+        remaining_wait = None if deadline is None else max(0.0, deadline - time.time())
+        request_timeout = WECHAT_LONG_POLL_TIMEOUT_SECONDS + 5.0
+        if remaining_wait is not None:
+            request_timeout = min(request_timeout, remaining_wait + 1.0)
+        request_timeout = max(request_timeout, poll_interval + 1.0, 1.5)
+        poll_payload = wechat_http_json(
+            "GET",
+            f"{WECHAT_DEFAULT_BASE_URL}/ilink/bot/get_qrcode_status?qrcode={qrcode}",
+            timeout=request_timeout,
+            timeout_returns_wait=True,
+        )
+        status = str(poll_payload.get("status", "wait"))
+        last_status = status
+        if not history or history[-1] != status:
+            history.append(status)
+        if status == "confirmed":
+            token = str(poll_payload.get("bot_token", ""))
+            account_id = str(poll_payload.get("ilink_bot_id", ""))
+            if not token or not account_id:
+                raise CCMError(f"Missing WeChat bot credentials in confirm response: {poll_payload}")
+            save_wechat_transport_state(
+                WeChatTransportState(
+                    token=token,
+                    base_url=str(poll_payload.get("baseurl") or WECHAT_DEFAULT_BASE_URL),
+                    account_id=account_id,
+                    user_id=str(poll_payload.get("ilink_user_id", "")),
+                    saved_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                ),
+                state_path,
+            )
+            break
+        if status in {"expired", "error"}:
+            break
+        if deadline is not None and time.time() >= deadline:
+            break
+        if poll_interval > 0:
+            time.sleep(poll_interval)
+    return {
+        "status": last_status,
+        "account_id": account_id or str(poll_payload.get("ilink_bot_id", "")),
+        "qrcode": qrcode,
+        "qrcode_img_url": qr_content,
+        "qr_path": str(qr_path) if qr_path is not None else "",
+        "history": history,
+        "opened": open_preview and qr_path is not None,
+    }
+
+
+def wechat_disconnect(state_path: Path | None = None) -> dict[str, Any]:
+    clear_wechat_transport_state(state_path)
+    return {"ok": True, "connected": False}
+
+
+def wechat_bind(state: WeChatTransportState, registry: WeChatRegistry, alias: str) -> WeChatTransportState:
+    normalized = sanitize_name(alias)
+    if normalized not in registry.peers:
+        raise CCMError(f"Unknown wechat peer alias: {normalized}")
+    state.bound_alias = normalized
+    return state
+
+
+def wechat_unbind(state: WeChatTransportState) -> WeChatTransportState:
+    state.bound_alias = ""
+    return state
+
+
+def wechat_users_payload(state: WeChatTransportState) -> list[dict[str, str]]:
+    return [{"user_id": user_id} for user_id in sorted(state.context_tokens)]
+
+
+def extract_wechat_text(message: dict[str, Any]) -> str:
+    for item in message.get("item_list") or []:
+        if item.get("type") == WECHAT_MSG_ITEM_TEXT:
+            return str((item.get("text_item") or {}).get("text", ""))
+    return ""
+
+
+def format_incoming_wechat_prompt(*, user_id: str, text: str, bound_alias: str) -> str:
+    parts = [
+        text,
+        "<system-reminder>",
+        "<ccm-wechat-incoming>",
+        f"  <user-id>{escape(user_id)}</user-id>",
+        f"  <bound-alias>{escape(bound_alias)}</bound-alias>",
+        "</ccm-wechat-incoming>",
+        f'To reply, use ccm wechat-reply {shlex.quote(user_id)} "...".',
+        "To hand work to another peer, use ccm wechat-shift <alias> \"...\".",
+        "</system-reminder>",
+    ]
+    return "\n".join(parts)
+
+
+def wechat_get_updates(state: WeChatTransportState) -> dict[str, Any]:
+    return wechat_http_json(
+        "POST",
+        f"{normalize_base_url(state.base_url)}/ilink/bot/getupdates",
+        token=state.token,
+        body={
+            "get_updates_buf": state.sync_buf,
+            "base_info": {"channel_version": WECHAT_CHANNEL_VERSION},
+        },
+        timeout=WECHAT_LONG_POLL_TIMEOUT_SECONDS + 5.0,
+        timeout_returns_wait=True,
+    )
+
+
+def wechat_poll_once(
+    state: WeChatTransportState,
+    *,
+    registry: WeChatRegistry,
+    listen_on: str | None,
+) -> dict[str, Any]:
+    payload = wechat_get_updates(state)
+    if payload.get("status") == "wait":
+        return {"delivered_count": 0, "messages": [], "status": "wait"}
+    if payload.get("ret", 0) != 0 or payload.get("errcode", 0) != 0:
+        raise CCMError(f"WeChat getupdates failed: errcode={payload.get('errcode', 0)} {payload.get('errmsg', '')}")
+    if payload.get("get_updates_buf"):
+        state.sync_buf = str(payload["get_updates_buf"])
+    delivered_count = 0
+    messages: list[dict[str, str]] = []
+    for msg in payload.get("msgs") or []:
+        if msg.get("message_type") != WECHAT_MSG_TYPE_USER:
+            continue
+        text = extract_wechat_text(msg)
+        if not text:
+            continue
+        user_id = str(msg.get("from_user_id", "unknown"))
+        context_token = str(msg.get("context_token", ""))
+        if context_token:
+            state.context_tokens[user_id] = context_token
+        messages.append({"user_id": user_id, "text": text})
+        if not state.bound_alias:
+            continue
+        target = resolve_registered_peer_target(registry, alias=state.bound_alias, listen_on=listen_on)
+        send_message_to_kitty_window(
+            target.window_id,
+            format_incoming_wechat_prompt(user_id=user_id, text=text, bound_alias=state.bound_alias),
+            listen_on,
+        )
+        delivered_count += 1
+    return {"delivered_count": delivered_count, "messages": messages, "status": "ok"}
+
+
+def wechat_reply(state: WeChatTransportState, *, user_id: str, text: str) -> dict[str, Any]:
+    context_token = state.context_tokens.get(user_id)
+    if not context_token:
+        raise CCMError(f"No saved context token for {user_id}. The user must message the bot first.")
+    client_id = f"ccm:{int(time.time())}"
+    body = {
+        "msg": {
+            "from_user_id": "",
+            "to_user_id": user_id,
+            "client_id": client_id,
+            "message_type": WECHAT_MSG_TYPE_BOT,
+            "message_state": WECHAT_MSG_STATE_FINISH,
+            "item_list": [{"type": WECHAT_MSG_ITEM_TEXT, "text_item": {"text": text}}],
+            "context_token": context_token,
+        },
+        "base_info": {"channel_version": WECHAT_CHANNEL_VERSION},
+    }
+    wechat_http_json(
+        "POST",
+        f"{normalize_base_url(state.base_url)}/ilink/bot/sendmessage",
+        token=state.token,
+        body=body,
+        timeout=WECHAT_SEND_TIMEOUT_SECONDS,
+    )
+    return {"ok": True, "user_id": user_id, "client_id": client_id}
+
+
+def launch_wechat_watch_daemon(*, listen_on: str | None, poll_interval: float) -> dict[str, Any]:
+    pid_path = wechat_watch_pid_path()
+    log_path = wechat_watch_log_path()
+    existing_pid = load_pid_file(pid_path)
+    if existing_pid and pid_is_running(existing_pid):
+        raise CCMError(f"WeChat watch is already running with pid {existing_pid}")
+
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, str(Path(__file__).resolve()), "wechat-watch", "--poll-interval", str(poll_interval)]
+    if listen_on:
+        command.extend(["--listen-on", listen_on])
+
+    with log_path.open("ab") as log_file:
+        # @@@wechat-watch-daemon - the background watcher must survive the parent shell
+        # and keep using the same installed manager code, so it launches a detached
+        # Python process directly against this module file and records its pid.
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    pid_path.write_text(f"{process.pid}\n")
+    return {"started": True, "pid": process.pid, "pid_path": str(pid_path), "log_path": str(log_path)}
+
+
+def wechat_watch_status() -> dict[str, Any]:
+    pid_path = wechat_watch_pid_path()
+    log_path = wechat_watch_log_path()
+    pid = load_pid_file(pid_path)
+    running = bool(pid and pid_is_running(pid))
+    return {
+        "running": running,
+        "pid": pid or 0,
+        "pid_path": str(pid_path),
+        "log_path": str(log_path),
+    }
+
+
+def wechat_watch_stop() -> dict[str, Any]:
+    pid_path = wechat_watch_pid_path()
+    pid = load_pid_file(pid_path)
+    if not pid:
+        return {"stopped": False, "reason": "not-running", "pid": 0}
+    if pid_is_running(pid):
+        os.kill(pid, signal.SIGTERM)
+    pid_path.unlink(missing_ok=True)
+    return {"stopped": True, "pid": pid}
+
+
 def infer_runtime_label(cmdline: str, helper: str, tmux_session: str) -> str:
     lowered = (cmdline or "").lower()
     if "codex" in lowered:
@@ -1185,6 +1671,90 @@ def wechat_contacts_payload(registry: WeChatRegistry) -> list[dict[str, str]]:
             }
         )
     return payload
+
+
+def unregister_wechat_peer(registry: WeChatRegistry, alias: str) -> WeChatPeerRecord:
+    normalized = sanitize_name(alias)
+    peer = registry.peers.get(normalized)
+    if peer is None:
+        raise CCMError(f"Unknown wechat peer alias: {normalized}")
+    del registry.peers[normalized]
+    return peer
+
+
+def render_wechat_guide(audience: str) -> str:
+    if audience == "human":
+        return textwrap.dedent(
+            """
+            CCM wechat guide
+
+            This project uses two different things called "wechat":
+            1. Real phone WeChat onboarding through ccm's direct iLink transport
+            2. ccm's wechat-style peer layer for stable alias-based tab handoff
+
+            For phone onboarding:
+            - ccm wechat-connect
+            - Scan the QR code with your phone
+            - ccm wechat-register <alias>
+            - ccm wechat-bind <alias>
+            - ccm wechat-watch --detach
+            - ccm wechat-watch-status
+            - ccm wechat-reply <user_id> "..."
+
+            For peer coordination after that:
+            - ccm wechat-register <alias>
+            - ccm wechat-contacts
+            - ccm wechat-send <alias> "..."
+            """
+        ).strip()
+
+    if audience != "agent":
+        raise CCMError(f"Unsupported wechat guide audience: {audience}")
+
+    return textwrap.dedent(
+        """
+        CCM wechat guide for agents
+
+        There are two layers here:
+        - Phone WeChat onboarding now has a real direct ccm transport path.
+        - ccm's wechat-style peer layer handles alias-based tab messaging and handoff.
+
+        If the user says "connect WeChat to you so I can message you from my phone", do this:
+        1. Run `ccm wechat-connect` and let it render/open a QR code.
+        2. Tell them to scan the QR code with their phone.
+        3. Register the current visible tab with `ccm wechat-register <alias>`.
+        4. Run `ccm wechat-bind <alias>`.
+        5. Run `ccm wechat-watch --detach`.
+        6. Check `ccm wechat-watch-status`.
+        7. If the user scans again later, run `ccm wechat-bind <alias>` again after the new `ccm wechat-connect`.
+
+        Phone-layer commands:
+        - `ccm wechat-connect` requests a real WeChat QR code and polls until confirmed.
+        - `ccm wechat-status` shows the global transport state.
+        - `ccm wechat-bind <alias>` binds incoming phone messages to one registered peer alias.
+        - `ccm wechat-unbind` clears that binding.
+        - `ccm wechat-users` lists known phone users who have messaged the bot.
+        - `ccm wechat-reply <user_id> "..."` replies to a phone user.
+        - `ccm wechat-poll-once` fetches and delivers one update batch for debugging or one-shot delivery.
+        - `ccm wechat-watch --detach` starts the canonical background watcher managed by ccm itself.
+        - `ccm wechat-watch-status` shows whether that watcher is still alive.
+        - `ccm wechat-watch-stop` stops the background watcher.
+        - `ccm wechat-disconnect` disconnects the phone-side WeChat session.
+
+        Peer-layer commands:
+        - `ccm wechat-register <alias>` binds the current visible tab to a stable alias.
+        - `ccm wechat-contacts` lists registered peers.
+        - `ccm wechat-send <alias> "..."` sends a reply-friendly message.
+        - `ccm wechat-shift <alias> "..."` hands work off.
+        - `ccm wechat-unregister <alias>` removes a stale alias.
+
+        Routing principle:
+        - Phone WeChat messages reach ccm through the direct transport and then get delivered to the bound alias.
+        - ccm wechat messages reach visible tabs directly through kitty.
+        - A stale watcher must not overwrite a newer phone login; reconnect, re-bind, then restart the watcher.
+        - Do not confuse those two paths.
+        """
+    ).strip()
 
 
 def wechat_send_to_peer(
@@ -1471,6 +2041,72 @@ def build_parser() -> argparse.ArgumentParser:
     relay_parser.add_argument("--scene", default="")
     relay_parser.add_argument("--ports", default="")
 
+    subparsers.add_parser(
+        "wechat-status",
+        help="phone wechat layer: show the global direct WeChat transport state",
+    )
+
+    wechat_connect_parser = subparsers.add_parser(
+        "wechat-connect",
+        help="phone wechat layer: request a QR code, render it, and poll for confirmation",
+    )
+    wechat_connect_parser.add_argument("--qrcode", help="Resume polling an already-issued WeChat QR token")
+    wechat_connect_parser.add_argument("--no-open", action="store_true")
+    wechat_connect_parser.add_argument("--wait-seconds", type=float, default=180.0)
+    wechat_connect_parser.add_argument("--poll-interval", type=float, default=2.0)
+
+    subparsers.add_parser(
+        "wechat-disconnect",
+        help="phone wechat layer: disconnect the current WeChat account",
+    )
+
+    wechat_bind_parser = subparsers.add_parser(
+        "wechat-bind",
+        help="phone wechat layer: bind incoming phone messages to one registered peer alias",
+    )
+    wechat_bind_parser.add_argument("alias")
+
+    subparsers.add_parser(
+        "wechat-unbind",
+        help="phone wechat layer: clear the bound peer alias for incoming phone messages",
+    )
+
+    subparsers.add_parser(
+        "wechat-users",
+        help="phone wechat layer: list known phone users who have messaged the bot",
+    )
+
+    wechat_reply_parser = subparsers.add_parser(
+        "wechat-reply",
+        help="phone wechat layer: reply to a phone WeChat user using its saved context token",
+    )
+    wechat_reply_parser.add_argument("user_id")
+    wechat_reply_parser.add_argument("message")
+
+    wechat_poll_once_parser = subparsers.add_parser(
+        "wechat-poll-once",
+        help="phone wechat layer: fetch one update batch and deliver it to the bound peer",
+    )
+    wechat_poll_once_parser.add_argument("--listen-on")
+
+    wechat_watch_parser = subparsers.add_parser(
+        "wechat-watch",
+        help="phone wechat layer: keep polling and delivering phone messages until interrupted",
+    )
+    wechat_watch_parser.add_argument("--detach", action="store_true")
+    wechat_watch_parser.add_argument("--listen-on")
+    wechat_watch_parser.add_argument("--poll-interval", type=float, default=1.0)
+
+    subparsers.add_parser(
+        "wechat-watch-status",
+        help="phone wechat layer: show the background watcher status",
+    )
+
+    subparsers.add_parser(
+        "wechat-watch-stop",
+        help="phone wechat layer: stop the background watcher",
+    )
+
     wechat_register_parser = subparsers.add_parser(
         "wechat-register",
         help="Register the current visible tab as a named peer for reply-friendly handoff",
@@ -1489,6 +2125,12 @@ def build_parser() -> argparse.ArgumentParser:
         "wechat-contacts",
         help="List registered peers in the global wechat-style registry",
     )
+
+    wechat_unregister_parser = subparsers.add_parser(
+        "wechat-unregister",
+        help="Remove a peer alias from the global wechat-style registry",
+    )
+    wechat_unregister_parser.add_argument("alias")
 
     wechat_send_parser = subparsers.add_parser(
         "wechat-send",
@@ -1511,6 +2153,18 @@ def build_parser() -> argparse.ArgumentParser:
     wechat_shift_parser.add_argument("--task", default="")
     wechat_shift_parser.add_argument("--scene", default="")
     wechat_shift_parser.add_argument("--from-alias", default="")
+
+    wechat_guide_parser = subparsers.add_parser(
+        "wechat-guide",
+        help="Read long-form guidance for phone onboarding and wechat-style peer messaging",
+    )
+    wechat_guide_parser.add_argument(
+        "audience",
+        nargs="?",
+        default="human",
+        choices=("human", "agent"),
+        help="Which wechat guide to render: human or agent",
+    )
 
     guide_parser = subparsers.add_parser(
         "guide",
@@ -1542,6 +2196,8 @@ def main(argv: list[str] | None = None) -> int:
     state = load_state(state_path)
     wechat_path = wechat_registry_path()
     wechat_registry = load_wechat_registry(wechat_path)
+    wechat_transport_path = wechat_transport_state_path()
+    wechat_transport = load_wechat_transport_state(wechat_transport_path)
 
     try:
         if args.command == "start":
@@ -1634,6 +2290,84 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
+        if args.command == "wechat-status":
+            emit(wechat_status_payload(wechat_transport), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-connect":
+            emit(
+                wechat_connect(
+                    state_path=wechat_transport_path,
+                    open_preview=not args.no_open,
+                    poll_interval=args.poll_interval,
+                    wait_seconds=args.wait_seconds,
+                    qrcode=args.qrcode,
+                ),
+                as_json=args.json,
+            )
+            return 0
+
+        if args.command == "wechat-disconnect":
+            emit(wechat_disconnect(wechat_transport_path), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-bind":
+            current_transport = wechat_bind(require_wechat_transport_state(wechat_transport), wechat_registry, args.alias)
+            save_wechat_transport_state(current_transport, wechat_transport_path)
+            emit(wechat_status_payload(current_transport), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-unbind":
+            current_transport = wechat_unbind(require_wechat_transport_state(wechat_transport))
+            save_wechat_transport_state(current_transport, wechat_transport_path)
+            emit(wechat_status_payload(current_transport), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-users":
+            emit(wechat_users_payload(require_wechat_transport_state(wechat_transport)), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-reply":
+            emit(
+                wechat_reply(require_wechat_transport_state(wechat_transport), user_id=args.user_id, text=args.message),
+                as_json=args.json,
+            )
+            return 0
+
+        if args.command == "wechat-poll-once":
+            current_transport = require_wechat_transport_state(wechat_transport)
+            payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
+            save_wechat_transport_state(current_transport, wechat_transport_path)
+            emit(payload, as_json=args.json)
+            return 0
+
+        if args.command == "wechat-watch":
+            if args.detach:
+                emit(
+                    launch_wechat_watch_daemon(listen_on=args.listen_on, poll_interval=args.poll_interval),
+                    as_json=args.json,
+                )
+                return 0
+            current_transport = require_wechat_transport_state(wechat_transport)
+            while True:
+                guard_wechat_transport_state(current_transport, wechat_transport_path)
+                payload = wechat_poll_once(current_transport, registry=wechat_registry, listen_on=args.listen_on)
+                save_wechat_transport_state(current_transport, wechat_transport_path)
+                if args.json:
+                    emit(payload, as_json=True)
+                elif payload["delivered_count"] or payload["messages"]:
+                    emit(payload, as_json=False)
+                time.sleep(args.poll_interval)
+            return 0
+
+        if args.command == "wechat-watch-status":
+            emit(wechat_watch_status(), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-watch-stop":
+            emit(wechat_watch_stop(), as_json=args.json)
+            return 0
+
         if args.command == "wechat-register":
             record = register_wechat_peer(
                 wechat_registry,
@@ -1650,6 +2384,12 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "wechat-contacts":
             emit(wechat_contacts_payload(wechat_registry), as_json=args.json)
+            return 0
+
+        if args.command == "wechat-unregister":
+            record = unregister_wechat_peer(wechat_registry, args.alias)
+            save_wechat_registry(wechat_registry, wechat_path)
+            emit(asdict(record), as_json=args.json)
             return 0
 
         if args.command == "wechat-send":
@@ -1684,6 +2424,10 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 as_json=args.json,
             )
+            return 0
+
+        if args.command == "wechat-guide":
+            print(render_wechat_guide(args.audience))
             return 0
 
         if args.command == "guide":

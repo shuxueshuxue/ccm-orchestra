@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -363,7 +364,13 @@ class WeChatPeerTests(unittest.TestCase):
     def test_root_help_mentions_wechat_commands(self):
         help_text = ccm.build_parser().format_help()
 
+        self.assertIn("wechat-connect", help_text)
+        self.assertIn("wechat-status", help_text)
+        self.assertIn("wechat-bind", help_text)
+        self.assertIn("wechat-reply", help_text)
         self.assertIn("wechat-register", help_text)
+        self.assertIn("wechat-guide", help_text)
+        self.assertIn("wechat-unregister", help_text)
         self.assertIn("wechat-send", help_text)
         self.assertIn("wechat-shift", help_text)
 
@@ -484,6 +491,372 @@ class WeChatPeerTests(unittest.TestCase):
         self.assertEqual(payload["from_alias"], "mycel")
         sent_message = send_message_to_kitty_window.call_args.args[1]
         self.assertIn("ccm wechat-send mycel", sent_message)
+
+    def test_unregister_wechat_peer_removes_alias(self):
+        registry = ccm.WeChatRegistry(
+            peers={
+                "scheduled-ui": ccm.WeChatPeerRecord(
+                    alias="scheduled-ui",
+                    title="scheduled-tasks",
+                    window_id="498",
+                    worktree="/work/scheduled",
+                    repo_root="/work",
+                    branch="feat/scheduled",
+                    tmux_session="codex-scheduled",
+                    helper="",
+                    helper_status="",
+                    helper_transcript="",
+                    runtime="codex",
+                    registered_at=0.0,
+                )
+            }
+        )
+
+        removed = ccm.unregister_wechat_peer(registry, "scheduled-ui")
+
+        self.assertEqual(removed.alias, "scheduled-ui")
+        self.assertEqual(registry.peers, {})
+
+    def test_render_wechat_guide_for_agent_covers_phone_onboarding(self):
+        guide_text = ccm.render_wechat_guide("agent")
+
+        self.assertIn("wechat-connect", guide_text)
+        self.assertIn("scan the QR code", guide_text)
+        self.assertIn("wechat-bind", guide_text)
+        self.assertIn("wechat-reply", guide_text)
+        self.assertIn("wechat-register", guide_text)
+        self.assertIn("wechat-send", guide_text)
+
+
+class WeChatPhoneTests(unittest.TestCase):
+    def test_load_and_save_wechat_transport_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wechat.json"
+            state = ccm.WeChatTransportState(
+                token="bot-token",
+                account_id="bot-1",
+                user_id="user-1",
+                saved_at="2026-03-30T00:00:00Z",
+                sync_buf="cursor-1",
+                context_tokens={"alice@im.wechat": "ctx-1"},
+                bound_alias="mycel",
+            )
+
+            ccm.save_wechat_transport_state(state, path)
+            loaded = ccm.load_wechat_transport_state(path)
+
+        self.assertEqual(loaded.token, "bot-token")
+        self.assertEqual(loaded.bound_alias, "mycel")
+        self.assertEqual(loaded.context_tokens["alice@im.wechat"], "ctx-1")
+
+    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    def test_wechat_connect_persists_direct_bot_credentials(self, wechat_http_json):
+        wechat_http_json.side_effect = [
+            {
+                "qrcode": "qr-token",
+                "qrcode_img_content": "https://liteapp.weixin.qq.com/q/demo",
+            },
+            {
+                "status": "confirmed",
+                "bot_token": "bot-token",
+                "ilink_bot_id": "bot-1",
+                "ilink_user_id": "user-1",
+                "baseurl": "https://ilinkai.weixin.qq.com",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch("claude_coop_manager.render_qr_png", return_value=Path("/tmp/wechat-qr.png")), \
+             mock.patch("claude_coop_manager.open_qr_preview", autospec=True):
+            path = Path(tmp) / "transport.json"
+            payload = ccm.wechat_connect(
+                state_path=path,
+                open_preview=False,
+                poll_interval=0.0,
+                wait_seconds=0.0,
+            )
+            saved = ccm.load_wechat_transport_state(path)
+
+        self.assertEqual(payload["status"], "confirmed")
+        self.assertEqual(saved.token, "bot-token")
+        self.assertEqual(saved.account_id, "bot-1")
+        self.assertEqual(saved.user_id, "user-1")
+
+    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    def test_wechat_connect_caps_poll_timeout_by_remaining_wait_window(self, wechat_http_json):
+        wechat_http_json.side_effect = [
+            {
+                "qrcode": "qr-token",
+                "qrcode_img_content": "https://liteapp.weixin.qq.com/q/demo",
+            },
+            {"status": "wait"},
+            {"status": "wait"},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch("claude_coop_manager.time.time", side_effect=[100.0, 100.1, 100.2, 101.1, 101.1]), \
+             mock.patch("claude_coop_manager.time.sleep", autospec=True), \
+             mock.patch("claude_coop_manager.render_qr_png", return_value=Path("/tmp/wechat-qr.png")), \
+             mock.patch("claude_coop_manager.open_qr_preview", autospec=True):
+            ccm.wechat_connect(
+                state_path=Path(tmp) / "transport.json",
+                open_preview=False,
+                poll_interval=0.2,
+                wait_seconds=1.0,
+            )
+
+        timeout = wechat_http_json.call_args_list[1].kwargs["timeout"]
+        self.assertLess(timeout, 5.0)
+
+    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    def test_wechat_connect_can_resume_existing_qrcode(self, wechat_http_json):
+        wechat_http_json.return_value = {
+            "status": "confirmed",
+            "bot_token": "bot-token",
+            "ilink_bot_id": "bot-1",
+            "ilink_user_id": "user-1",
+            "baseurl": "https://ilinkai.weixin.qq.com",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch("claude_coop_manager.render_qr_png", autospec=True) as render_qr_png, \
+             mock.patch("claude_coop_manager.open_qr_preview", autospec=True) as open_qr_preview:
+            path = Path(tmp) / "transport.json"
+            payload = ccm.wechat_connect(
+                state_path=path,
+                open_preview=False,
+                poll_interval=0.0,
+                wait_seconds=5.0,
+                qrcode="qr-token",
+            )
+            saved = ccm.load_wechat_transport_state(path)
+
+        render_qr_png.assert_not_called()
+        open_qr_preview.assert_not_called()
+        self.assertEqual(payload["qrcode"], "qr-token")
+        self.assertEqual(payload["status"], "confirmed")
+        self.assertEqual(saved.token, "bot-token")
+        self.assertEqual(saved.account_id, "bot-1")
+
+    @mock.patch("claude_coop_manager.subprocess.Popen", autospec=True)
+    def test_launch_wechat_watch_daemon_writes_pidfile_and_returns_paths(self, popen):
+        process = mock.Mock()
+        process.pid = 43210
+        popen.return_value = process
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict(
+                 "os.environ",
+                 {
+                     "CCM_WECHAT_WATCH_PID_PATH": str(Path(tmp) / "watch.pid"),
+                     "CCM_WECHAT_WATCH_LOG_PATH": str(Path(tmp) / "watch.log"),
+                 },
+                 clear=False,
+             ):
+            payload = ccm.launch_wechat_watch_daemon(listen_on="unix:/tmp/mykitty", poll_interval=2.5)
+
+            self.assertEqual(payload["pid"], 43210)
+            self.assertEqual(Path(payload["pid_path"]).read_text().strip(), "43210")
+            self.assertEqual(Path(payload["log_path"]).name, "watch.log")
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
+            self.assertIn("wechat-watch", popen.call_args.args[0])
+
+    def test_wechat_watch_status_reads_running_pid(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict(
+                 "os.environ",
+                 {
+                     "CCM_WECHAT_WATCH_PID_PATH": str(Path(tmp) / "watch.pid"),
+                     "CCM_WECHAT_WATCH_LOG_PATH": str(Path(tmp) / "watch.log"),
+                 },
+                 clear=False,
+             ), \
+             mock.patch("claude_coop_manager.pid_is_running", return_value=True):
+            Path(tmp, "watch.pid").write_text("43210\n")
+            payload = ccm.wechat_watch_status()
+
+        self.assertTrue(payload["running"])
+        self.assertEqual(payload["pid"], 43210)
+
+    @mock.patch("claude_coop_manager.os.kill", autospec=True)
+    def test_wechat_watch_stop_terminates_running_process_and_clears_pidfile(self, os_kill):
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict(
+                 "os.environ",
+                 {
+                     "CCM_WECHAT_WATCH_PID_PATH": str(Path(tmp) / "watch.pid"),
+                     "CCM_WECHAT_WATCH_LOG_PATH": str(Path(tmp) / "watch.log"),
+                 },
+                 clear=False,
+             ), \
+             mock.patch("claude_coop_manager.pid_is_running", return_value=True):
+            pid_path = Path(tmp) / "watch.pid"
+            pid_path.write_text("43210\n")
+            payload = ccm.wechat_watch_stop()
+
+        os_kill.assert_called_once()
+        self.assertFalse(pid_path.exists())
+        self.assertTrue(payload["stopped"])
+
+    def test_wechat_watch_refuses_to_overwrite_newer_transport_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "transport.json"
+            current = ccm.WeChatTransportState(token="old-token", account_id="old-bot")
+            replacement = ccm.WeChatTransportState(token="new-token", account_id="new-bot")
+            ccm.save_wechat_transport_state(replacement, path)
+
+            with self.assertRaises(ccm.CCMError) as ctx:
+                ccm.guard_wechat_transport_state(current, path)
+
+        self.assertIn("replaced", str(ctx.exception))
+
+    def test_wechat_status_payload_reports_connection_and_binding(self):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            account_id="bot-1",
+            user_id="user-1",
+            context_tokens={"alice@im.wechat": "ctx-1", "bob@im.wechat": "ctx-2"},
+            bound_alias="mycel",
+        )
+        payload = ccm.wechat_status_payload(state)
+
+        self.assertTrue(payload["connected"])
+        self.assertEqual(payload["account_id"], "bot-1")
+        self.assertEqual(payload["contact_count"], 2)
+        self.assertEqual(payload["bound_alias"], "mycel")
+
+    def test_wechat_bind_updates_bound_alias(self):
+        registry = ccm.WeChatRegistry(
+            peers={
+                "mycel": ccm.WeChatPeerRecord(
+                    alias="mycel",
+                    title="mycel",
+                    window_id="536",
+                    worktree="/work/main",
+                    repo_root="/work",
+                    branch="main",
+                    tmux_session="codex-main",
+                    helper="",
+                    helper_status="",
+                    helper_transcript="",
+                    runtime="codex",
+                    registered_at=0.0,
+                )
+            }
+        )
+        state = ccm.WeChatTransportState(token="bot-token")
+
+        updated = ccm.wechat_bind(state, registry, "mycel")
+
+        self.assertEqual(updated.bound_alias, "mycel")
+
+    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    def test_wechat_poll_once_delivers_messages_to_bound_peer(
+        self,
+        resolve_registered_peer_target,
+        send_message_to_kitty_window,
+        wechat_http_json,
+    ):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            account_id="bot-1",
+            user_id="user-1",
+            bound_alias="scheduled-tasks",
+        )
+        registry = ccm.WeChatRegistry(
+            peers={
+                "scheduled-tasks": ccm.WeChatPeerRecord(
+                    alias="scheduled-tasks",
+                    title="scheduled-tasks",
+                    window_id="498",
+                    worktree="/work/scheduled",
+                    repo_root="/work",
+                    branch="feat/scheduled",
+                    tmux_session="codex-scheduled",
+                    helper="",
+                    helper_status="",
+                    helper_transcript="",
+                    runtime="codex",
+                    registered_at=0.0,
+                )
+            }
+        )
+        resolve_registered_peer_target.return_value = registry.peers["scheduled-tasks"]
+        send_message_to_kitty_window.return_value = {"window_id": "498", "title": "scheduled-tasks"}
+        wechat_http_json.return_value = {
+            "ret": 0,
+            "errcode": 0,
+            "get_updates_buf": "cursor-1",
+            "msgs": [
+                {
+                    "message_type": 1,
+                    "from_user_id": "alice@im.wechat",
+                    "context_token": "ctx-1",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "hello from phone"}},
+                    ],
+                }
+            ],
+        }
+
+        payload = ccm.wechat_poll_once(
+            state,
+            registry=registry,
+            listen_on="unix:/tmp/mykitty",
+        )
+
+        self.assertEqual(payload["delivered_count"], 1)
+        self.assertEqual(state.sync_buf, "cursor-1")
+        self.assertEqual(state.context_tokens["alice@im.wechat"], "ctx-1")
+        sent_message = send_message_to_kitty_window.call_args.args[1]
+        self.assertIn("hello from phone", sent_message)
+        self.assertIn("ccm wechat-reply alice@im.wechat", sent_message)
+
+    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    def test_wechat_reply_uses_saved_context_token(self, wechat_http_json):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            account_id="bot-1",
+            context_tokens={"alice@im.wechat": "ctx-1"},
+        )
+        wechat_http_json.return_value = {"ret": 0, "errcode": 0}
+
+        payload = ccm.wechat_reply(state, user_id="alice@im.wechat", text="hello back")
+
+        self.assertEqual(payload["user_id"], "alice@im.wechat")
+        args = wechat_http_json.call_args.args
+        self.assertEqual(args[0], "POST")
+        self.assertIn("sendmessage", args[1])
+        body = wechat_http_json.call_args.kwargs["body"]
+        self.assertEqual(body["msg"]["to_user_id"], "alice@im.wechat")
+        self.assertEqual(body["msg"]["context_token"], "ctx-1")
+
+    def test_wechat_users_payload_lists_known_phone_contacts(self):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            context_tokens={
+                "alice@im.wechat": "ctx-1",
+                "bob@im.wechat": "ctx-2",
+            },
+        )
+
+        payload = ccm.wechat_users_payload(state)
+
+        self.assertEqual(len(payload), 2)
+        self.assertEqual(payload[0]["user_id"], "alice@im.wechat")
+
+    def test_render_incoming_wechat_prompt_includes_reply_command(self):
+        rendered = ccm.format_incoming_wechat_prompt(
+            user_id="alice@im.wechat",
+            text="hello from phone",
+            bound_alias="mycel",
+        )
+
+        self.assertIn("<ccm-wechat-incoming>", rendered)
+        self.assertIn("ccm wechat-reply alice@im.wechat", rendered)
+        self.assertIn("hello from phone", rendered)
 
 
 class CommandBuildTests(unittest.TestCase):

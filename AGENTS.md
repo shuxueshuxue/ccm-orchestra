@@ -15,8 +15,9 @@ This system has two layers:
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the frontend in this branch and propose improvements." --cwd "$PWD"
 ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"
-ccm kill frontend-helper --cwd "$PWD"
 ```
+
+Keep the helper if this tab will keep working with it. Do not kill and recreate it after every small turn unless you are deliberately resetting the scene.
 
 ## Optional kitty Layer
 
@@ -36,6 +37,19 @@ ccm wechat-send scheduled-tasks "Please summarize your current frontend directio
 ccm wechat-shift scheduled-tasks "Take over the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
+## Phone WeChat Layer
+
+```bash
+ccm wechat-connect
+ccm wechat-status
+ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-bind mycel
+ccm wechat-watch --detach --listen-on "${KITTY_LISTEN_ON}"
+ccm wechat-watch-status
+```
+
+If the user wants actual phone WeChat messaging, use the commands above. `ccm wechat-guide agent` explains the full split between the direct phone transport and the peer layer.
+
 ## Useful Commands
 
 ```bash
@@ -54,3 +68,5 @@ ccm doctor --cwd "$PWD"
 - Use normal interactive Claude only. The main reason is to avoid drifting into non-interactive automation patterns that may be riskier for the account.
 - `open` is not part of the everyday loop. Use it only for debugging, live observation, or deliberate visible-tab collaboration.
 - If a session crashed or `kill` was interrupted, run `ccm cleanup --cwd "$PWD"`.
+- After every new `ccm wechat-connect`, run `ccm wechat-bind <alias>` again. A new phone WeChat login is a new transport session.
+- For ongoing phone delivery, use `ccm wechat-watch --detach`, not an ad-hoc shell background job.

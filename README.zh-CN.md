@@ -150,7 +150,7 @@ ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 
 ### 把可见 kitty tab 当成 peer 来通信
 
-这是可选的 `kitty` 层，不是核心会话路径。
+`kitty` 是可见协作层。它不是 helper 真正运行的那一层，但当人类、Codex、Claude 需要互相看见并实时交换消息时，它就是系统里的第一等能力。
 
 ```bash
 ccm tabs --listen-on unix:/tmp/mykitty
@@ -180,6 +180,53 @@ ccm wechat-shift scheduled-tasks "Take ownership of the next frontend simplify p
 ```
 
 `wechat-send` 和 `wechat-shift` 会自动包上一层 system-style reminder，并明确写出怎么回，例如 `ccm wechat-send mycel "..."`。每个 tab 都应该注册一个具体 alias，并避免撞名。
+
+### 手机微信接入是另一条路径
+
+如果用户说“把微信接到你这里，让我能用手机联系你”，不要把这件事和上面的 peer 层混为一谈。
+
+直接走 CLI 真流程：
+
+```bash
+ccm wechat-connect
+ccm wechat-status
+ccm wechat-register mycel --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm wechat-bind mycel
+ccm wechat-watch --detach --listen-on "${KITTY_LISTEN_ON}"
+ccm wechat-watch-status
+```
+
+这条链的含义是：
+
+- `wechat-connect` 直接对接 WeChat iLink transport，去申请真正的微信二维码，把它渲染成 PNG，并且可以直接打开给用户扫码。
+- `wechat-status` 用来确认全局手机侧 WeChat transport 是否已经连上。
+- `wechat-bind` 决定手机侧新消息默认送到哪个已注册 alias。
+- `wechat-watch --detach` 用 `ccm` 自己托管后台 watcher。不要再依赖临时 shell 后台脚本去跑长期手机消息投递。
+- `wechat-watch-status` 用来看这个 watcher 现在是否还活着。
+
+等这条手机侧路径准备好之后，`ccm` 里的 wechat 风格 peer 层仍然可以继续负责 tab 之间的协作和转交。
+
+现场规则：
+
+- 每次重新 `wechat-connect` 之后，都要再跑一次 `ccm wechat-bind <alias>`。新扫码会创建新的 transport session，不要假设旧绑定会自动跟过去。
+- 如果 watcher 是在旧的 WeChat session 上启动的，重连后就要停掉旧 watcher 再起新的。`ccm` 现在会拒绝让 stale watcher 把更新后的 transport state 覆盖回旧状态。
+- `ccm wechat-poll-once` 适合 debug 或单次拉取；真正长期运行要用 `ccm wechat-watch --detach`。
+
+需要完整引导词时，用：
+
+```bash
+ccm wechat-guide agent
+```
+
+常用清理：
+
+```bash
+ccm wechat-disconnect
+ccm wechat-unbind
+ccm wechat-users
+ccm wechat-reply <user_id> "..."
+ccm wechat-watch-stop
+```
 
 ### 保持监督用的 Codex tab 存活
 
