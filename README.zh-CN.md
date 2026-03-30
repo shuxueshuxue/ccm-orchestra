@@ -2,9 +2,9 @@
 
 [English](./README.md)
 
-`ccm-orchestra` 是一个很小的控制层，用来在 `tmux` 里运行交互式 Claude Code helper，并在需要时通过 `kitty` 做可见协作。
+`ccm-orchestra` 是一个控制层，用来在 `tmux` 里运行持续的交互式 Claude Code helper，并在需要时通过 `kitty` 做可见协作。
 
-目标很实际：把真实 Claude 会话稳定地放在后台复用，用 transcript 增量读取拿到新消息，只有在真的有必要的时候才把会话拉到可见终端里。
+核心 loop 很简单：在 detached tmux pane 里启动 helper，给它发 prompt，再从 transcript 里读新输出。Session 按工作目录隔离，所以不同仓库里可以复用同一个 helper 名；`kitty` 能力只在你真的需要可见协作或 live 检查时再叠上去。
 
 ## 两层结构
 
@@ -25,18 +25,6 @@
 
 不要把这两者混为一谈。等 `read` 不会替你唤醒另一个 agent tab。
 
-## 为什么做这个
-
-很多所谓多智能体流程最后都死在同样的地方：
-
-- helper 状态在不同项目之间互相污染
-- 终端自动化非常脆弱
-- 可见协作和后台等待被混成一团
-- 工作流慢慢滑向你本来就不想依赖的非交互自动化
-- 监督行为流于形式
-
-`ccm-orchestra` 就是为了解决这些常见死法。它坚持使用正常交互式 Claude，会按工作目录隔离状态，并给 Codex 足够的控制能力去真正管理这些会话。
-
 ## 为什么用 `tmux` 跑交互式 Claude，而不是 `claude -p`
 
 主因是运维层面的，不是哲学层面的。
@@ -45,25 +33,12 @@
 
 这并不是在声称 `claude -p` 不能携带上下文。这里不做这个论断。
 
-真正的规则是：
+实际规则是：
 
 - canonical path 是在 `tmux` 里跑交互式 Claude
 - `tmux` 再给我们提供想要的进程边界，方便复用、读 transcript、检查、重启和清理
 - 同一个交互式 helper 可以同时被两边接触：人可以 attach/观察，程序化工具也仍然可以 send、read、doctor、restart、supervise
 - 不要把主工作流建立在 `claude -p` 上
-
-## 功能特性
-
-- 明确的两层模型：后台 `tmux` 会话控制 + 可选的前台 `kitty` 协作
-- 通过 detached `tmux` 运行持续的交互式 Claude Code Session
-- 按工作目录隔离命名空间，不同项目可并行使用同名 helper
-- 从 Claude 的真实 JSONL transcript 中增量读取新消息
-- 在需要人工查看时，通过 `kitty` 重新打开会话
-- 列出当前可见的 `kitty` tabs，并按 title 直接发消息
-- 自带心跳工具，避免监督中的 Codex tab 静默死亡
-- `doctor` 命令用于环境和命名空间自检
-- `read --wait-seconds` 用于处理 transcript 落盘延迟
-- 整体结构简单，没有沉重框架依赖
 
 ## 快速开始
 
@@ -209,17 +184,6 @@ codex-heartbeat stop
 - 能读 Claude transcript 时就读真实 transcript，不依赖屏幕抓取
 - 只有在上游 Session 自己出问题时，才退回终端 pane 检查
 
-## 已验证的关键行为
-
-这个 repo 里已经明确验证过：
-
-- 单元测试通过
-- 两个不同目录可以并行运行同名 helper
-- `start --cwd <dir>` 会严格使用指定目录
-- heartbeat 真的能把消息注入 `Main` `kitty` tab
-- 真实的交互式 Claude Session 能正常启动并接收 prompt
-- 可见的 kitty tab 可以被枚举出来，并且能按 title 收到注入消息
-
 ## 注意事项
 
 - 如果 Claude 上游 API 自己不稳定，助手输出还是可能延迟或失败；工具不会掩盖这个事实。
@@ -246,7 +210,3 @@ ccm-orchestra/
 ├── README.md
 └── README.zh-CN.md
 ```
-
-## 当前状态
-
-这个项目已经足够能打，可以投入使用；同时也还足够小，能很快继续进化。这正是它应有的状态。

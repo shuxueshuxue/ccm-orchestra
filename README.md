@@ -2,9 +2,9 @@
 
 [中文说明](./README.zh-CN.md)
 
-`ccm-orchestra` is a small control plane for running interactive Claude Code helpers in `tmux` and, when needed, coordinating visible tabs in `kitty`.
+`ccm-orchestra` is a control plane for running persistent, interactive Claude Code helpers in `tmux`, with optional visible coordination through `kitty`.
 
-The point is practical: keep the real Claude session persistent and reusable in the background, read its transcript incrementally, and only bring it into a visible terminal when that is actually useful.
+The core loop is simple: start a helper in a detached tmux pane, send it prompts, and read its transcript. Sessions are isolated by working directory, so the same helper name can coexist across repos. `kitty` features are layered on top only when you need visible collaboration or live inspection.
 
 ## The Two Layers
 
@@ -25,19 +25,7 @@ The wakeup model is different across the two layers:
 
 Do not mix those up. Waiting on `read` will not wake another agent tab for you.
 
-## Why This Exists
-
-Most "multi-agent" workflows fall apart in exactly the same places:
-
-- helper state gets mixed across projects
-- terminal automation is brittle
-- visible coordination and background waiting get conflated
-- the workflow quietly drifts toward non-interactive automation even when you do not want that
-- supervision becomes theater instead of real operations
-
-`ccm-orchestra` is built to avoid that trap. It keeps Claude interactive, keeps sessions isolated by working directory, and gives Codex enough leverage to supervise, reuse, and clean up those sessions like a real toolchain.
-
-## Why Interactive Claude In `tmux` Instead of `claude -p`
+## Why Interactive Sessions In `tmux` Instead of `claude -p`
 
 The main reason is operational, not philosophical.
 
@@ -45,25 +33,12 @@ This project intentionally keeps its canonical path on normal interactive Claude
 
 That does not mean `claude -p` cannot carry context. That is not the claim here.
 
-The actual rule is:
+The practical rule is:
 
 - the canonical path is interactive Claude in `tmux`
 - `tmux` then gives us the process boundary we want for reuse, transcript reading, inspection, restart, and cleanup
 - the same interactive helper can be approached from both sides: humans can attach and inspect it, while programmatic tooling can still send, read, doctor, restart, and supervise it
 - do not build the main workflow around `claude -p`
-
-## Features
-
-- Clear two-layer model: persistent `tmux` session control plus optional `kitty` collaboration
-- Persistent interactive Claude Code sessions via detached `tmux`
-- Namespace isolation by working directory, so same helper names can coexist across repos
-- Incremental transcript reading from Claude's real JSONL session logs
-- `kitty` reopen flow for live inspection when needed
-- `kitty` tab listing and message injection for visible peer-to-peer coordination
-- Heartbeat helper for keeping a supervising Codex tab alive
-- `doctor` command for environment and namespace sanity checks
-- `read --wait-seconds` for transcript lag without ad hoc sleep loops
-- Minimal shell entrypoints, no heavy framework required
 
 ## Quickstart
 
@@ -209,17 +184,6 @@ The orchestration strategy is intentionally narrow:
 - read Claude's real transcript files instead of scraping terminal text when possible
 - fall back to terminal inspection only when the upstream session itself is misbehaving
 
-## Sanity-Checked Behaviors
-
-These have been explicitly verified in this repo:
-
-- unit tests pass
-- two different directories can run the same helper name in parallel
-- `start --cwd <dir>` honors the requested working directory
-- heartbeat injection into the `Main` `kitty` tab works in practice
-- real interactive Claude sessions launch and receive prompts
-- visible kitty tabs can be listed and can receive injected messages by title
-
 ## Caveats
 
 - Upstream Claude API instability can still delay or block assistant output; the tool does not hide that.
@@ -279,7 +243,3 @@ ccm-orchestra/
 ├── README.md
 └── README.zh-CN.md
 ```
-
-## Status
-
-This project is live enough to be useful and small enough to improve fast. That is exactly the point.
