@@ -2,6 +2,15 @@
 
 This playbook is for a Codex session that wants to use interactive Claude Code as a frontend copilot.
 
+## Mental Model
+
+Treat the system as two layers:
+
+- `tmux` layer: the default path for persistent interactive Claude helpers
+- `kitty` layer: optional visibility and peer-to-peer coordination
+
+Most frontend work should stay in the `tmux` layer and use `ccm read` instead of staring at a live terminal.
+
 ## Tooling
 
 - Claude session manager: `ccm`
@@ -11,6 +20,7 @@ This playbook is for a Codex session that wants to use interactive Claude Code a
 ## Rules
 
 - Use interactive Claude only. Do not use Claude `--print`.
+- The reason is practical: we want persistent sessions, real transcript history, and a workflow that does not depend on non-interactive automation patterns.
 - Keep Claude scoped to your current worktree and your current branch goal.
 - Treat Claude as a frontend reviewer and alternative-implementation generator, not as the owner of the whole branch.
 - Iterate. One prompt is not enough.
@@ -62,6 +72,8 @@ ccm read frontend-helper --wait-seconds 30
 ```
 
 If you want to watch the live session in a visible terminal:
+
+This is optional. `ccm open` is not part of the default loop.
 
 ```bash
 ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON:-unix:/tmp/mykitty}"

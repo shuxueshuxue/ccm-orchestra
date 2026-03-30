@@ -2,6 +2,15 @@
 
 This playbook is for a visible Codex tab that should collaborate with interactive Claude Code while keeping the full live terminal process visible in `kitty`.
 
+## Mental Model
+
+Treat the system as two layers:
+
+- `tmux` layer: the real Claude helper session. This is the default path.
+- `kitty` layer: optional visible collaboration and observation.
+
+Do not confuse "visible" with "canonical". Most work should stay in the `tmux` layer and use transcript reads.
+
 ## Tools
 
 - `ccm`: manages interactive Claude Code sessions
@@ -13,6 +22,7 @@ This playbook is for a visible Codex tab that should collaborate with interactiv
 ## Rules
 
 - Use interactive Claude only. Do not use Claude `--print`.
+- The reason is not style. We want persistent sessions, real transcript history, and a workflow that does not depend on non-interactive automation patterns.
 - Keep Claude scoped to your current worktree and your current branch goal.
 - Use Claude as a frontend reviewer, critic, and alternative-implementation generator.
 - Iterate several times. One pass is not enough.
@@ -50,7 +60,7 @@ export CCM_READY_TIMEOUT_SECONDS=300
 ccm start frontend-helper --cwd "$PWD"
 ```
 
-If you want the Claude session visible in a `kitty` tab while it works:
+Only open the helper into a visible `kitty` tab if transcript output is not enough:
 
 ```bash
 ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON:-unix:/tmp/mykitty}"

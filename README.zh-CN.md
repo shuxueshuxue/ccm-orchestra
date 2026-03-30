@@ -6,6 +6,18 @@
 
 它让 Codex 可以在后台启动并维持真实的交互式 Claude 会话，用 `tmux` 保持持续 Session，用 transcript 增量读取获取新消息，用 `kitty` 在需要时再把会话拉回前台。少一点表演式“多智能体”，多一点可运维、可复查、可复用的真实协作。
 
+## 两层结构
+
+这个系统本质上分成两层：
+
+- `tmux` 层：真正的会话层。负责把交互式 Claude Code 持续跑着，按 worktree 隔离，并让 Codex 反复复用同一个 helper。
+- `kitty` 层：可见协作层。负责把部分会话拉到前台可见，列出可见 peer，并在 tab 之间做带回执约定的通信。
+
+如果只记一件事，就记这个：
+
+- 日常工作发生在 `tmux` 层：`start -> send -> read`
+- `kitty` 不是必需层，主要用于观察和可见协作
+
 ## 为什么做这个
 
 很多所谓多智能体流程最后都死在同样的地方：
@@ -18,8 +30,25 @@
 
 `ccm-orchestra` 就是为了解决这些常见死法。它坚持使用正常交互式 Claude，会按工作目录隔离状态，并给 Codex 足够的控制能力去真正管理这些会话。
 
+## 为什么用 `tmux` 跑交互式 Claude，而不是 `claude -p`
+
+这个项目有意把“正常交互式 Claude Code”作为主路径，而不是把系统建立在非交互 print mode 上。
+
+原因很直接：
+
+- 交互式 session 是持续的，helper 可以跨多轮保留上下文
+- 交互式 session 会产出真实 transcript，`ccm read` 才能增量读取
+- `tmux` 给了我们稳定的进程边界，方便复用、检查、重启和清理
+- 从运维角度看，我们不希望主流程建立在看起来像大规模脚本化调用的非交互模式上；这种模式更容易接近账号风控边界
+
+所以规则很简单：
+
+- canonical path 是在 `tmux` 里跑交互式 Claude
+- 不要把主工作流建立在 `claude -p` 上
+
 ## 功能特性
 
+- 明确的两层模型：后台 `tmux` 会话控制 + 可选的前台 `kitty` 协作
 - 通过 detached `tmux` 运行持续的交互式 Claude Code Session
 - 按工作目录隔离命名空间，不同项目可并行使用同名 helper
 - 从 Claude 的真实 JSONL transcript 中增量读取新消息
@@ -35,9 +64,9 @@
 ### 1. 前置依赖
 
 - `python3`
-- `tmux`
+- `tmux`，用于会话层
 - `claude`
-- 如果要用 `open` 或 heartbeat，需要 `kitty`
+- `kitty` 只在你需要可见协作层时才需要，比如 `open`、`tabs`、`tell`、`relay`、heartbeat
 
 ### 2. 在任意目录通过全局 CLI 运行
 
@@ -51,9 +80,6 @@ ccm doctor --cwd "$PWD"
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
 ccm read frontend-helper --wait-seconds 20 --cwd "$PWD"
-ccm open frontend-helper --cwd "$PWD"
-ccm tabs --listen-on unix:/tmp/mykitty
-ccm tell "scheduled-tasks" "Please review the current frontend and reply in this tab." --listen-on unix:/tmp/mykitty
 ccm kill frontend-helper --cwd "$PWD"
 ```
 
@@ -82,7 +108,6 @@ codex-heartbeat status
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the frontend in this branch and propose improvements." --cwd "$PWD"
 ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"
-ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ccm kill frontend-helper --cwd "$PWD"
 ```
 
@@ -120,7 +145,21 @@ ccm --cwd ~/Codebase/leonai/frontend read frontend-helper --wait-seconds 30
 ccm doctor
 ```
 
+### 只有真的需要看前台时才用 `open`
+
+`open` 不是日常 loop 的一部分。只有在 transcript 不够的时候才该用：
+
+- debug 卡住的 helper
+- 做 live 观察
+- 有意识地做 visible-tab 协作
+
+```bash
+ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+```
+
 ### 把可见 kitty tab 当成 peer 来通信
+
+这是可选的 `kitty` 层，不是核心会话路径。
 
 ```bash
 ccm tabs --listen-on unix:/tmp/mykitty
@@ -143,10 +182,12 @@ codex-heartbeat stop
 
 ## 架构
 
-`ccm-orchestra` 主要由两部分组成：
+`ccm-orchestra` 主要由两层加一个辅助工具组成：
 
-- `claude_coop_manager.py`
-  负责会话生命周期、transcript 读取、命名空间隔离和 `kitty` 重新打开。
+- `tmux` 会话层，由 `claude_coop_manager.py` 负责
+  启动和复用交互式 Claude helper，按 worktree 隔离，读取 transcript，并运行 doctor 自检。
+- `kitty` 协作层，也由 `claude_coop_manager.py` 负责
+  列出可见 tab、注入消息，并支持带 reply hint 的 relay 通信。
 - `bin/codex-heartbeat`
   定时向指定 `kitty` tab 注入心跳消息，避免长时间监督时主 Codex 静默掉线。
 
@@ -185,7 +226,8 @@ ccm-orchestra/
 │   ├── ccm
 │   └── codex-heartbeat
 ├── docs/
-│   └── claude-codex-frontend-playbook.md
+│   ├── claude-codex-frontend-playbook.md
+│   └── codex-claude-visible-collab-playbook.md
 ├── tests/
 │   └── test_claude_coop_manager.py
 ├── claude_coop_manager.py

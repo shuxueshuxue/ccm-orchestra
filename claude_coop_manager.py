@@ -970,27 +970,31 @@ def emit_list(records: list[SessionRecord], *, as_json: bool) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Manage interactive Claude Code sessions for Codex",
+        description=(
+            "Manage interactive Claude Code sessions for Codex. tmux is the persistent "
+            "session layer; kitty is the optional visible collaboration layer."
+        ),
         epilog=(
-            "Daily loop: start -> send -> read. Use 'open' only when the transcript "
-            "is not enough: debugging a stuck helper, live observation, or deliberate "
-            "visible-tab collaboration."
+            "Daily loop: start -> send -> read. Use interactive Claude sessions in tmux, "
+            "not non-interactive print mode. Use 'open' only when the transcript is not "
+            "enough: debugging a stuck helper, live observation, or deliberate visible-tab "
+            "collaboration."
         ),
     )
     parser.add_argument("--cwd", help="Select the session namespace directory; for start, also use it as the Claude cwd")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    start_parser = subparsers.add_parser("start", help="Start a managed Claude session")
+    start_parser = subparsers.add_parser("start", help="tmux layer: start a persistent interactive Claude session")
     start_parser.add_argument("name")
 
     subparsers.add_parser("list", help="List managed Claude sessions")
 
-    send_parser = subparsers.add_parser("send", help="Send a prompt to a Claude session")
+    send_parser = subparsers.add_parser("send", help="tmux layer: send a prompt to a managed Claude session")
     send_parser.add_argument("name")
     send_parser.add_argument("prompt")
 
-    read_parser = subparsers.add_parser("read", help="Read unread transcript events")
+    read_parser = subparsers.add_parser("read", help="tmux layer: read unread transcript events from the helper")
     read_parser.add_argument("name")
     read_parser.add_argument("--include-user", action="store_true")
     read_parser.add_argument("--include-thinking", action="store_true")
@@ -1001,12 +1005,12 @@ def build_parser() -> argparse.ArgumentParser:
     kill_parser.add_argument("names", nargs="*")
     kill_parser.add_argument("--all", action="store_true")
 
-    cleanup_parser = subparsers.add_parser("cleanup", help="Remove dead sessions from state and optionally kill live ones")
+    cleanup_parser = subparsers.add_parser("cleanup", help="tmux layer: remove dead sessions from state and optionally kill live ones")
     cleanup_parser.add_argument("--kill-live", action="store_true")
 
     open_parser = subparsers.add_parser(
         "open",
-        help="Open a visible kitty tab for a managed helper when debugging or observing live output",
+        help="kitty layer: open a visible tab for a managed helper when debugging or observing live output",
         description=(
             "Open is an exception tool, not part of the everyday loop. Prefer "
             "'start -> send -> read' for normal work. Use 'open' only when you need "
@@ -1016,17 +1020,17 @@ def build_parser() -> argparse.ArgumentParser:
     open_parser.add_argument("name")
     open_parser.add_argument("--listen-on")
 
-    tabs_parser = subparsers.add_parser("tabs", help="List visible kitty tabs that can receive messages")
+    tabs_parser = subparsers.add_parser("tabs", help="kitty layer: list visible tabs and their resolved identity")
     tabs_parser.add_argument("--listen-on")
 
-    tell_parser = subparsers.add_parser("tell", help="Send a message to a visible kitty tab by title")
+    tell_parser = subparsers.add_parser("tell", help="kitty layer: send raw fire-and-forget text to a visible tab")
     tell_parser.add_argument("title")
     tell_parser.add_argument("message")
     tell_parser.add_argument("--listen-on")
 
     relay_parser = subparsers.add_parser(
         "relay",
-        help="Preferred for agents in kitty: send a message with sender context and reply hint",
+        help="kitty layer: preferred for agents, send a message with sender context and reply hint",
         description=(
             "Prefer 'relay' over 'tell' when you are an agent inside kitty and expect a "
             "useful reply. Relay wraps the message with sender identity and a reply hint. "
@@ -1040,7 +1044,7 @@ def build_parser() -> argparse.ArgumentParser:
     relay_parser.add_argument("--scene", default="")
     relay_parser.add_argument("--ports", default="")
 
-    subparsers.add_parser("doctor", help="Report current environment and session namespace health")
+    subparsers.add_parser("doctor", help="tmux layer: report environment and session namespace health")
 
     return parser
 

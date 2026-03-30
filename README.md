@@ -6,6 +6,18 @@
 
 It gives Codex a practical control plane for running real Claude sessions in the background, steering them through `tmux`, surfacing their transcript incrementally, and reopening them in `kitty` only when humans actually need to look. The result is simple: fewer dead-end terminal rituals, more usable parallel agent work.
 
+## The Two Layers
+
+This system has two clearly different layers:
+
+- `tmux` layer: the real session layer. It keeps interactive Claude Code alive, isolates it by worktree, and lets Codex reuse the same helper over time.
+- `kitty` layer: the visible collaboration layer. It lets humans and other agents see selected sessions, list visible peers, and exchange messages with receipt-friendly envelopes.
+
+If you remember only one thing, remember this:
+
+- everyday work happens in the `tmux` layer: `start -> send -> read`
+- `kitty` is optional, mostly for observation and visible coordination
+
 ## Why This Exists
 
 Most "multi-agent" workflows fall apart in exactly the same places:
@@ -18,8 +30,25 @@ Most "multi-agent" workflows fall apart in exactly the same places:
 
 `ccm-orchestra` is built to avoid that trap. It keeps Claude interactive, keeps sessions isolated by working directory, and gives Codex enough leverage to supervise, reuse, and clean up those sessions like a real toolchain.
 
+## Why Interactive Claude In `tmux` Instead of `claude -p`
+
+This project intentionally prefers normal interactive Claude Code sessions over non-interactive print mode.
+
+Why:
+
+- interactive sessions are persistent, so a helper can keep context across turns
+- interactive sessions produce real transcript history that `ccm read` can follow incrementally
+- `tmux` gives a stable process boundary for reuse, inspection, restart, and cleanup
+- operationally, we want to avoid building the workflow around non-interactive automation patterns that can look like bulk scripted usage and may be more likely to trigger account risk controls
+
+So the rule is simple:
+
+- use interactive Claude in `tmux` as the canonical path
+- do not build the main workflow around `claude -p`
+
 ## Features
 
+- Clear two-layer model: persistent `tmux` session control plus optional `kitty` collaboration
 - Persistent interactive Claude Code sessions via detached `tmux`
 - Namespace isolation by working directory, so same helper names can coexist across repos
 - Incremental transcript reading from Claude's real JSONL session logs
@@ -35,9 +64,9 @@ Most "multi-agent" workflows fall apart in exactly the same places:
 ### 1. Prerequisites
 
 - `python3`
-- `tmux`
+- `tmux` for the session layer
 - `claude`
-- `kitty` for `open` or heartbeat features
+- `kitty` only if you want the visible collaboration layer (`open`, `tabs`, `tell`, `relay`, heartbeat)
 
 ### 2. Run from anywhere with the global CLI
 
@@ -51,9 +80,6 @@ ccm doctor --cwd "$PWD"
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
 ccm read frontend-helper --wait-seconds 20 --cwd "$PWD"
-ccm open frontend-helper --cwd "$PWD"
-ccm tabs --listen-on unix:/tmp/mykitty
-ccm tell "scheduled-tasks" "Please review the current frontend and reply in this tab." --listen-on unix:/tmp/mykitty
 ccm kill frontend-helper --cwd "$PWD"
 ```
 
@@ -82,7 +108,6 @@ Use the global `ccm` only. If a helper starts failing after a Claude or `ccm` up
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the frontend in this branch and propose improvements." --cwd "$PWD"
 ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"
-ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ccm kill frontend-helper --cwd "$PWD"
 ```
 
@@ -120,7 +145,21 @@ ccm --cwd ~/Codebase/leonai/frontend read frontend-helper --wait-seconds 30
 ccm doctor
 ```
 
+### Open a helper only when you actually need to look
+
+`open` is not part of the normal loop. Use it only when transcript output is not enough:
+
+- debugging a stuck helper
+- supervised live observation
+- deliberate visible-tab collaboration
+
+```bash
+ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+```
+
 ### Use visible kitty tabs as peers
+
+This is the optional `kitty` layer, not the core session path.
 
 ```bash
 ccm tabs --listen-on unix:/tmp/mykitty
@@ -143,10 +182,12 @@ codex-heartbeat stop
 
 ## Architecture
 
-`ccm-orchestra` has two moving parts:
+`ccm-orchestra` has two main layers plus one small support tool:
 
-- `claude_coop_manager.py`
-  Handles session lifecycle, transcript reading, namespace isolation, and `kitty` reopening.
+- `tmux` session layer, handled by `claude_coop_manager.py`
+  Starts and reuses interactive Claude helpers, isolates them by worktree, reads transcripts, and runs doctor checks.
+- `kitty` collaboration layer, also handled by `claude_coop_manager.py`
+  Lists visible tabs, injects messages, and supports reply-friendly relay envelopes between tabs.
 - `bin/codex-heartbeat`
   Sends periodic heartbeat prompts into a target `kitty` tab so long-running supervision does not die quietly.
 
@@ -218,7 +259,8 @@ ccm-orchestra/
 │   ├── ccm
 │   └── codex-heartbeat
 ├── docs/
-│   └── claude-codex-frontend-playbook.md
+│   ├── claude-codex-frontend-playbook.md
+│   └── codex-claude-visible-collab-playbook.md
 ├── tests/
 │   └── test_claude_coop_manager.py
 ├── claude_coop_manager.py
