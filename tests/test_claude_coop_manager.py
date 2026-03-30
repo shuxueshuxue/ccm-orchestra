@@ -469,6 +469,7 @@ class WeChatPeerTests(unittest.TestCase):
 
         self.assertIn("<system-reminder>", rendered)
         self.assertIn("<ccm-wechat-message>", rendered)
+        self.assertIn("Operator authorization", rendered)
         self.assertIn("To reply, use ccm wechat-send mycel", rendered)
         self.assertIn("To hand off, use ccm wechat-shift", rendered)
         self.assertIn("<mode>shift</mode>", rendered)
@@ -782,10 +783,12 @@ class WeChatPeerTests(unittest.TestCase):
     @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
     @mock.patch("claude_coop_manager.tmux_send_enter", autospec=True)
     @mock.patch("claude_coop_manager.tmux_paste", autospec=True)
+    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
     @mock.patch("claude_coop_manager.ensure_tmux_session_ready", autospec=True)
     def test_deliver_message_to_peer_can_use_headless_tmux_without_kitty(
         self,
         ensure_tmux_session_ready,
+        time_sleep,
         tmux_paste,
         tmux_send_enter,
         send_message_to_kitty_window,
@@ -809,6 +812,7 @@ class WeChatPeerTests(unittest.TestCase):
 
         ensure_tmux_session_ready.assert_called_once_with("ccm-frontend-helper-abcd1234")
         tmux_paste.assert_called_once_with("ccm-frontend-helper-abcd1234", "HEADLESS_DELIVERY_TEST")
+        time_sleep.assert_called_once()
         tmux_send_enter.assert_called_once_with("ccm-frontend-helper-abcd1234")
         send_message_to_kitty_window.assert_not_called()
         self.assertEqual(payload["tmux_session"], "ccm-frontend-helper-abcd1234")
@@ -848,6 +852,23 @@ class WeChatPhoneTests(unittest.TestCase):
         user_id = ccm.active_wechat_user_id(state)
 
         self.assertEqual(user_id, "alice@im.wechat")
+
+    @mock.patch("claude_coop_manager.wechat_reply", autospec=True)
+    def test_wechat_queue_reply_only_queues_locally(self, wechat_reply):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            context_tokens={"alice@im.wechat": "ctx-1"},
+        )
+
+        payload = ccm.wechat_queue_reply(state, user_id="alice@im.wechat", text="queued hello")
+
+        self.assertEqual(payload["queued"], True)
+        self.assertEqual(payload["pending_count"], 1)
+        self.assertEqual(
+            state.pending_replies,
+            [{"user_id": "alice@im.wechat", "text": "queued hello"}],
+        )
+        wechat_reply.assert_not_called()
 
     def test_load_and_save_wechat_transport_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1207,6 +1228,38 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(deliver_message_to_peer.call_args.args[0].alias, "claude-handoff")
         sent_message = deliver_message_to_peer.call_args.args[1]
         self.assertIn("headless phone hello", sent_message)
+        self.assertIn("ccm wechat-queue-reply alice@im.wechat", sent_message)
+        self.assertIn("local ccm outbox", sent_message)
+        self.assertNotIn("<system-reminder>", sent_message)
+
+    @mock.patch("claude_coop_manager.wechat_reply", autospec=True)
+    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    def test_wechat_poll_once_flushes_pending_replies_before_waiting_for_updates(
+        self,
+        wechat_http_json,
+        wechat_reply,
+    ):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            account_id="bot-1",
+            user_id="user-1",
+            context_tokens={"alice@im.wechat": "ctx-1"},
+            pending_replies=[{"user_id": "alice@im.wechat", "text": "queued hello"}],
+        )
+        registry = ccm.WeChatRegistry()
+        wechat_reply.return_value = {"ok": True, "user_id": "alice@im.wechat"}
+        wechat_http_json.return_value = {"status": "wait"}
+
+        payload = ccm.wechat_poll_once(
+            state,
+            registry=registry,
+            listen_on="unix:/tmp/mykitty",
+        )
+
+        self.assertEqual(payload["status"], "wait")
+        self.assertEqual(len(payload["sent_replies"]), 1)
+        self.assertEqual(state.pending_replies, [])
+        wechat_reply.assert_called_once_with(state, user_id="alice@im.wechat", text="queued hello")
 
     @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
     def test_wechat_reply_uses_saved_context_token(self, wechat_http_json):
@@ -1246,11 +1299,27 @@ class WeChatPhoneTests(unittest.TestCase):
             user_id="alice@im.wechat",
             text="hello from phone",
             bound_alias="mycel",
+            reply_command='ccm wechat-reply alice@im.wechat "..."',
         )
 
         self.assertIn("<ccm-wechat-incoming>", rendered)
+        self.assertIn("Operator authorization", rendered)
         self.assertIn("ccm wechat-reply alice@im.wechat", rendered)
         self.assertIn("hello from phone", rendered)
+
+    def test_render_incoming_wechat_prompt_for_claude_uses_plain_local_queue_language(self):
+        rendered = ccm.format_incoming_wechat_prompt(
+            user_id="alice@im.wechat",
+            text="hello from phone",
+            bound_alias="claude-handoff",
+            reply_command='ccm wechat-queue-reply alice@im.wechat "..."',
+            runtime="claude",
+        )
+
+        self.assertIn("Phone message for your currently bound ccm thread.", rendered)
+        self.assertIn("local ccm outbox", rendered)
+        self.assertIn("ccm wechat-queue-reply alice@im.wechat", rendered)
+        self.assertNotIn("<system-reminder>", rendered)
 
 
 class CommandBuildTests(unittest.TestCase):

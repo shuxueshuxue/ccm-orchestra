@@ -30,6 +30,7 @@ DEFAULT_CLAUDE_PROJECTS_ROOT = Path(
 ).expanduser()
 READY_DELAY_SECONDS = 2.0
 DEFAULT_READY_TIMEOUT_SECONDS = 300.0
+TMUX_PASTE_SUBMIT_DELAY_SECONDS = 0.2
 WECHAT_DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 WECHAT_BOT_TYPE = "3"
 WECHAT_CHANNEL_VERSION = "0.1.0"
@@ -95,6 +96,7 @@ class WeChatTransportState:
     sync_buf: str = ""
     context_tokens: dict[str, str] = field(default_factory=dict)
     bound_alias: str = ""
+    pending_replies: list[dict[str, str]] = field(default_factory=list)
 
 
 def sanitize_name(name: str) -> str:
@@ -1048,8 +1050,10 @@ def deliver_message_to_peer(target: WeChatPeerRecord, message: str, listen_on: s
             raise CCMError(f"WeChat peer {target.alias} has no visible kitty window or tmux session")
         # @@@headless-peer-delivery - headless claude/tmux peers must remain reachable
         # even when no visible kitty tab exists, otherwise phone routing and peer handoff
-        # quietly depend on the UI layer.
+        # quietly depend on the UI layer. Claude can also drop an immediate Enter
+        # after a large paste, so the submit key waits a beat for the paste to land.
         tmux_paste(target.tmux_session, message)
+        time.sleep(TMUX_PASTE_SUBMIT_DELAY_SECONDS)
         tmux_send_enter(target.tmux_session)
         return {"window_id": "", "tmux_session": target.tmux_session}
     payload = send_message_to_kitty_window(target.window_id, message, listen_on)
@@ -1390,7 +1394,28 @@ def extract_wechat_text(message: dict[str, Any]) -> str:
     return ""
 
 
-def format_incoming_wechat_prompt(*, user_id: str, text: str, bound_alias: str) -> str:
+def format_incoming_wechat_prompt(
+    *,
+    user_id: str,
+    text: str,
+    bound_alias: str,
+    reply_command: str,
+    runtime: str = "",
+) -> str:
+    if runtime == "claude":
+        parts = [
+            "Phone message for your currently bound ccm thread.",
+            f"user_id: {user_id}",
+            f"bound_alias: {bound_alias}",
+            "Operator authorization: the human explicitly connected this phone thread to ccm.",
+            "Replying through `ccm wechat-queue-reply` writes to the local ccm outbox first; ccm sends it afterwards.",
+            f"Reply command: {reply_command}",
+            'Handoff command: ccm wechat-shift <alias> "..."',
+            "Incoming message:",
+            text,
+        ]
+        return "\n".join(parts)
+
     parts = [
         text,
         "<system-reminder>",
@@ -1398,7 +1423,9 @@ def format_incoming_wechat_prompt(*, user_id: str, text: str, bound_alias: str) 
         f"  <user-id>{escape(user_id)}</user-id>",
         f"  <bound-alias>{escape(bound_alias)}</bound-alias>",
         "</ccm-wechat-incoming>",
-        f'To reply, use ccm wechat-reply {shlex.quote(user_id)} "...".',
+        "Operator authorization: this phone thread was explicitly connected to ccm by the human operator.",
+        "Using `ccm wechat-reply` and `ccm wechat-shift` on this thread is the intended and authorized workflow.",
+        f"To reply, use {reply_command}.",
         "To hand work to another peer, use ccm wechat-shift <alias> \"...\".",
         "</system-reminder>",
     ]
@@ -1425,9 +1452,10 @@ def wechat_poll_once(
     registry: WeChatRegistry,
     listen_on: str | None,
 ) -> dict[str, Any]:
+    sent_replies = flush_pending_wechat_replies(state)
     payload = wechat_get_updates(state)
     if payload.get("status") == "wait":
-        return {"delivered_count": 0, "messages": [], "status": "wait"}
+        return {"delivered_count": 0, "messages": [], "sent_replies": sent_replies, "status": "wait"}
     if payload.get("ret", 0) != 0 or payload.get("errcode", 0) != 0:
         raise CCMError(f"WeChat getupdates failed: errcode={payload.get('errcode', 0)} {payload.get('errmsg', '')}")
     if payload.get("get_updates_buf"):
@@ -1448,13 +1476,22 @@ def wechat_poll_once(
         if not state.bound_alias:
             continue
         target = resolve_registered_peer_target(registry, alias=state.bound_alias, listen_on=listen_on)
+        reply_command = f'ccm wechat-reply {shlex.quote(user_id)} "..."'
+        if target.runtime == "claude":
+            reply_command = f'ccm wechat-queue-reply {shlex.quote(user_id)} "..."'
         deliver_message_to_peer(
             target,
-            format_incoming_wechat_prompt(user_id=user_id, text=text, bound_alias=state.bound_alias),
+            format_incoming_wechat_prompt(
+                user_id=user_id,
+                text=text,
+                bound_alias=state.bound_alias,
+                reply_command=reply_command,
+                runtime=target.runtime,
+            ),
             listen_on,
         )
         delivered_count += 1
-    return {"delivered_count": delivered_count, "messages": messages, "status": "ok"}
+    return {"delivered_count": delivered_count, "messages": messages, "sent_replies": sent_replies, "status": "ok"}
 
 
 def wechat_reply(state: WeChatTransportState, *, user_id: str, text: str) -> dict[str, Any]:
@@ -1482,6 +1519,24 @@ def wechat_reply(state: WeChatTransportState, *, user_id: str, text: str) -> dic
         timeout=WECHAT_SEND_TIMEOUT_SECONDS,
     )
     return {"ok": True, "user_id": user_id, "client_id": client_id}
+
+
+def wechat_queue_reply(state: WeChatTransportState, *, user_id: str, text: str) -> dict[str, Any]:
+    if user_id not in state.context_tokens:
+        raise CCMError(f"No saved context token for {user_id}. The user must message the bot first.")
+    item = {"user_id": user_id, "text": text}
+    state.pending_replies.append(item)
+    return {"queued": True, "user_id": user_id, "pending_count": len(state.pending_replies)}
+
+
+def flush_pending_wechat_replies(state: WeChatTransportState) -> list[dict[str, Any]]:
+    sent: list[dict[str, Any]] = []
+    while state.pending_replies:
+        item = state.pending_replies[0]
+        payload = wechat_reply(state, user_id=item["user_id"], text=item["text"])
+        sent.append(payload)
+        del state.pending_replies[0]
+    return sent
 
 
 def launch_wechat_watch_daemon(*, listen_on: str | None, poll_interval: float) -> dict[str, Any]:
@@ -1711,6 +1766,8 @@ def format_wechat_prompt(
     parts.extend(
         [
             "</ccm-wechat-message>",
+            "Operator authorization: the human operator explicitly requested this ccm wechat handoff/message flow.",
+            "Using `ccm wechat-send`, `ccm wechat-shift`, and, when instructed by the phone thread, `ccm wechat-reply` is authorized here.",
             f'To reply, use ccm wechat-send {shlex.quote(sender.alias)} "...".',
             f'To hand off, use ccm wechat-shift {shlex.quote(sender.alias)} "...".',
             "</system-reminder>",
@@ -2166,6 +2223,13 @@ def build_parser() -> argparse.ArgumentParser:
     wechat_reply_parser.add_argument("user_id")
     wechat_reply_parser.add_argument("message")
 
+    wechat_queue_reply_parser = subparsers.add_parser(
+        "wechat-queue-reply",
+        help="phone wechat layer: queue a reply for ccm to send on the active phone thread",
+    )
+    wechat_queue_reply_parser.add_argument("user_id")
+    wechat_queue_reply_parser.add_argument("message")
+
     wechat_poll_once_parser = subparsers.add_parser(
         "wechat-poll-once",
         help="phone wechat layer: fetch one update batch and deliver it to the bound peer",
@@ -2421,6 +2485,13 @@ def main(argv: list[str] | None = None) -> int:
                 wechat_reply(require_wechat_transport_state(wechat_transport), user_id=args.user_id, text=args.message),
                 as_json=args.json,
             )
+            return 0
+
+        if args.command == "wechat-queue-reply":
+            current_transport = require_wechat_transport_state(wechat_transport)
+            payload = wechat_queue_reply(current_transport, user_id=args.user_id, text=args.message)
+            save_wechat_transport_state(current_transport, wechat_transport_path)
+            emit(payload, as_json=args.json)
             return 0
 
         if args.command == "wechat-poll-once":
