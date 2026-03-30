@@ -3,7 +3,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-import ccm_smoke
+from ccm_orchestra import smoke as smoke
 
 
 def completed(*, stdout: str = "", stderr: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -11,7 +11,7 @@ def completed(*, stdout: str = "", stderr: str = "", returncode: int = 0) -> sub
 
 
 class SmokeCheckTests(unittest.TestCase):
-    @mock.patch("ccm_smoke.run_cli", autospec=True)
+    @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
     def test_run_smoke_happy_path_reads_probe_token_and_returns_summary(self, run_cli):
         token = "CCM_SMOKE_ACK_TEST"
         run_cli.side_effect = [
@@ -25,7 +25,7 @@ class SmokeCheckTests(unittest.TestCase):
             completed(stdout=json.dumps({"removed_dead": [], "killed_live": []})),
         ]
 
-        payload = ccm_smoke.run_smoke(
+        payload = smoke.run_smoke(
             cwd="/work/demo",
             helper_name="smoke-helper",
             read_wait_seconds=12.0,
@@ -44,7 +44,7 @@ class SmokeCheckTests(unittest.TestCase):
         self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-helper"])
         self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
 
-    @mock.patch("ccm_smoke.run_cli", autospec=True)
+    @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
     def test_run_smoke_cleans_up_when_read_output_is_missing_probe_token(self, run_cli):
         run_cli.side_effect = [
             completed(stdout=json.dumps({"ok": True})),
@@ -58,7 +58,7 @@ class SmokeCheckTests(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(RuntimeError, "probe token"):
-            ccm_smoke.run_smoke(
+            smoke.run_smoke(
                 cwd="/work/demo",
                 helper_name="smoke-helper",
                 read_wait_seconds=12.0,
@@ -68,11 +68,11 @@ class SmokeCheckTests(unittest.TestCase):
         self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-helper"])
         self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
 
-    @mock.patch("ccm_smoke.run_cli", autospec=True)
+    @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
     def test_heartbeat_status_treats_not_running_as_valid_observation(self, run_cli):
         run_cli.return_value = completed(stdout="not-running\n", returncode=1)
 
-        payload = ccm_smoke.heartbeat_status()
+        payload = smoke.heartbeat_status()
 
         self.assertEqual(payload, {"running": False, "raw": "not-running"})
         self.assertEqual(run_cli.call_args.args[0], ["codex-heartbeat", "status"])

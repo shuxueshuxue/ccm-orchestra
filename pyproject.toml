@@ -13,12 +13,12 @@ license = { text = "Proprietary" }
 dependencies = []
 
 [project.scripts]
-ccm = "claude_coop_manager:main"
-codex-heartbeat = "codex_heartbeat:main"
-ccm-smoke = "ccm_smoke:main"
+ccm = "ccm_orchestra.cli:main"
+codex-heartbeat = "ccm_orchestra.heartbeat:main"
+ccm-smoke = "ccm_orchestra.smoke:main"
 
 [tool.setuptools]
-py-modules = ["claude_coop_manager", "codex_heartbeat", "ccm_smoke"]
+packages = ["ccm_orchestra"]
 
 [tool.setuptools.package-dir]
 "" = "."

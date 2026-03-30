@@ -161,7 +161,7 @@ def start_background(endpoint: str, interval_seconds: int, message: str, tab_tit
             [
                 sys.executable,
                 "-m",
-                "codex_heartbeat",
+                "ccm_orchestra.heartbeat",
                 "run",
                 "--interval-seconds",
                 str(interval_seconds),

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import claude_coop_manager as ccm
+from ccm_orchestra import cli as ccm
 
 
 class SanitizeNameTests(unittest.TestCase):
@@ -192,7 +192,7 @@ class TranscriptResolutionTests(unittest.TestCase):
             self.assertEqual(roots[0], active)
             self.assertIn(fallback, roots)
 
-    @mock.patch("claude_coop_manager.candidate_projects_roots", autospec=True)
+    @mock.patch("ccm_orchestra.cli.candidate_projects_roots", autospec=True)
     def test_resolve_transcript_searches_cac_projects_root(self, candidate_projects_roots):
         with tempfile.TemporaryDirectory() as tmp:
             fallback = Path(tmp) / "fallback"
@@ -233,7 +233,7 @@ class TranscriptResolutionTests(unittest.TestCase):
 
             self.assertEqual(match, transcript)
 
-    @mock.patch("claude_coop_manager.candidate_projects_roots", autospec=True)
+    @mock.patch("ccm_orchestra.cli.candidate_projects_roots", autospec=True)
     def test_describe_transcript_search_lists_roots_and_identity(self, candidate_projects_roots):
         candidate_projects_roots.return_value = [Path("/tmp/cac/projects"), Path("/tmp/fallback/projects")]
         record = ccm.SessionRecord(
@@ -319,7 +319,7 @@ class NamespaceTests(unittest.TestCase):
                 )
             )
 
-            with mock.patch("claude_coop_manager.session_status", side_effect=["running", "dead"]):
+            with mock.patch("ccm_orchestra.cli.session_status", side_effect=["running", "dead"]):
                 payload = ccm.list_sessions_all_scopes(home)
 
         self.assertEqual(
@@ -346,8 +346,8 @@ class NamespaceTests(unittest.TestCase):
 
 
 class MainDispatchTests(unittest.TestCase):
-    @mock.patch("claude_coop_manager.emit_list", autospec=True)
-    @mock.patch("claude_coop_manager.load_state", autospec=True)
+    @mock.patch("ccm_orchestra.cli.emit_list", autospec=True)
+    @mock.patch("ccm_orchestra.cli.load_state", autospec=True)
     def test_main_uses_global_cwd_for_state_namespace(self, load_state, emit_list):
         state = ccm.State()
         load_state.return_value = state
@@ -363,8 +363,8 @@ class MainDispatchTests(unittest.TestCase):
 
         self.assertEqual(normalized, ["--json", "--state-path", "/tmp/override.json", "doctor"])
 
-    @mock.patch("claude_coop_manager.emit_list", autospec=True)
-    @mock.patch("claude_coop_manager.load_state", autospec=True)
+    @mock.patch("ccm_orchestra.cli.emit_list", autospec=True)
+    @mock.patch("ccm_orchestra.cli.load_state", autospec=True)
     def test_main_uses_explicit_state_path_when_provided(self, load_state, emit_list):
         load_state.return_value = ccm.State()
 
@@ -374,8 +374,8 @@ class MainDispatchTests(unittest.TestCase):
         load_state.assert_called_once_with(Path("/tmp/override.json"))
         emit_list.assert_called_once()
 
-    @mock.patch("claude_coop_manager.emit", autospec=True)
-    @mock.patch("claude_coop_manager.load_state", autospec=True)
+    @mock.patch("ccm_orchestra.cli.emit", autospec=True)
+    @mock.patch("ccm_orchestra.cli.load_state", autospec=True)
     def test_main_accepts_global_json_flag_after_subcommand(self, load_state, emit):
         load_state.return_value = ccm.State()
 
@@ -384,8 +384,8 @@ class MainDispatchTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         emit.assert_called_once()
 
-    @mock.patch("claude_coop_manager.emit", autospec=True)
-    @mock.patch("claude_coop_manager.load_state", autospec=True)
+    @mock.patch("ccm_orchestra.cli.emit", autospec=True)
+    @mock.patch("ccm_orchestra.cli.load_state", autospec=True)
     def test_main_uses_sys_argv_when_not_explicitly_provided(self, load_state, emit):
         load_state.return_value = ccm.State()
 
@@ -395,9 +395,9 @@ class MainDispatchTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         emit.assert_called_once()
 
-    @mock.patch("claude_coop_manager.emit", autospec=True)
-    @mock.patch("claude_coop_manager.list_sessions_all_scopes", autospec=True)
-    @mock.patch("claude_coop_manager.load_state", autospec=True)
+    @mock.patch("ccm_orchestra.cli.emit", autospec=True)
+    @mock.patch("ccm_orchestra.cli.list_sessions_all_scopes", autospec=True)
+    @mock.patch("ccm_orchestra.cli.load_state", autospec=True)
     def test_main_can_list_all_scopes(self, load_state, list_sessions_all_scopes, emit):
         load_state.return_value = ccm.State()
         list_sessions_all_scopes.return_value = [{"name": "frontend-helper"}]
@@ -533,8 +533,8 @@ class WeChatPeerTests(unittest.TestCase):
             "window_id": "498",
         }
 
-        with mock.patch("claude_coop_manager.resolve_current_sender_context", return_value=current), \
-             mock.patch("claude_coop_manager.current_tmux_session_name", return_value="dev-shell"):
+        with mock.patch("ccm_orchestra.cli.resolve_current_sender_context", return_value=current), \
+             mock.patch("ccm_orchestra.cli.current_tmux_session_name", return_value="dev-shell"):
             record = ccm.register_wechat_peer(
                 registry,
                 alias="scheduled-ui",
@@ -563,8 +563,8 @@ class WeChatPeerTests(unittest.TestCase):
             "cmdline": "",
         }
 
-        with mock.patch("claude_coop_manager.resolve_current_sender_context", return_value=current), \
-             mock.patch("claude_coop_manager.current_tmux_session_name", return_value="ccm-frontend-helper-abcd1234"):
+        with mock.patch("ccm_orchestra.cli.resolve_current_sender_context", return_value=current), \
+             mock.patch("ccm_orchestra.cli.current_tmux_session_name", return_value="ccm-frontend-helper-abcd1234"):
             record = ccm.register_wechat_peer(
                 registry,
                 alias="claude-handoff",
@@ -639,9 +639,9 @@ class WeChatPeerTests(unittest.TestCase):
         self.assertIn("<system-reminder>", rendered)
         self.assertNotIn("\n", rendered)
 
-    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_sender_alias", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    @mock.patch("ccm_orchestra.cli.send_message_to_kitty_window", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_sender_alias", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_registered_peer_target", autospec=True)
     def test_wechat_send_uses_registered_alias_and_window_target(
         self,
         resolve_registered_peer_target,
@@ -698,11 +698,11 @@ class WeChatPeerTests(unittest.TestCase):
         sent_message = send_message_to_kitty_window.call_args.args[1]
         self.assertIn("ccm wechat-send mycel", sent_message)
 
-    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_send_enter", autospec=True)
-    @mock.patch("claude_coop_manager.ensure_tmux_session_ready", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_sender_alias", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    @mock.patch("ccm_orchestra.cli.send_message_to_kitty_window", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True)
+    @mock.patch("ccm_orchestra.cli.ensure_tmux_session_ready", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_sender_alias", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_registered_peer_target", autospec=True)
     def test_wechat_shift_compacts_multiline_envelope_for_claude_targets(
         self,
         resolve_registered_peer_target,
@@ -762,10 +762,10 @@ class WeChatPeerTests(unittest.TestCase):
         ensure_tmux_session_ready.assert_called_once_with("ccm-frontend-helper-abcd1234")
         tmux_send_enter.assert_called_once_with("ccm-frontend-helper-abcd1234")
 
-    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_sender_alias", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
-    @mock.patch("claude_coop_manager.wechat_reply", autospec=True)
+    @mock.patch("ccm_orchestra.cli.send_message_to_kitty_window", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_sender_alias", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_registered_peer_target", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_reply", autospec=True)
     def test_wechat_shift_rebinds_phone_owner_when_sender_currently_owns_thread(
         self,
         wechat_reply,
@@ -816,9 +816,9 @@ class WeChatPeerTests(unittest.TestCase):
         send_message_to_kitty_window.return_value = {"window_id": "536", "endpoint": "unix:/tmp/mykitty"}
         wechat_reply.return_value = {"ok": True, "user_id": "alice@im.wechat"}
 
-        with mock.patch("claude_coop_manager.ensure_tmux_session_ready", autospec=True), \
-             mock.patch("claude_coop_manager.tmux_paste", autospec=True), \
-             mock.patch("claude_coop_manager.tmux_send_enter", autospec=True):
+        with mock.patch("ccm_orchestra.cli.ensure_tmux_session_ready", autospec=True), \
+             mock.patch("ccm_orchestra.cli.tmux_paste", autospec=True), \
+             mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True):
             payload = ccm.wechat_send_to_peer(
                 registry,
                 alias="claude-handoff",
@@ -883,14 +883,14 @@ class WeChatPeerTests(unittest.TestCase):
         )
         current = {"title": "main", "worktree": "/work/ccm", "window_id": ""}
 
-        with mock.patch("claude_coop_manager.resolve_current_sender_context", return_value=current), \
-             mock.patch("claude_coop_manager.current_tmux_session_name", return_value="ccm-frontend-helper-abcd1234"):
+        with mock.patch("ccm_orchestra.cli.resolve_current_sender_context", return_value=current), \
+             mock.patch("ccm_orchestra.cli.current_tmux_session_name", return_value="ccm-frontend-helper-abcd1234"):
             alias = ccm.resolve_sender_alias(registry, cwd="/work/ccm", listen_on="unix:/tmp/mykitty")
 
         self.assertEqual(alias, "claude-handoff")
 
-    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True, return_value=True)
-    @mock.patch("claude_coop_manager.list_kitty_tabs", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_has_session", autospec=True, return_value=True)
+    @mock.patch("ccm_orchestra.cli.list_kitty_tabs", autospec=True)
     def test_resolve_registered_peer_target_allows_headless_tmux_peer(self, list_kitty_tabs, tmux_has_session):
         registry = ccm.WeChatRegistry(
             peers={
@@ -917,11 +917,11 @@ class WeChatPeerTests(unittest.TestCase):
         self.assertEqual(target.tmux_session, "ccm-frontend-helper-abcd1234")
         list_kitty_tabs.assert_not_called()
 
-    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_send_enter", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_paste", autospec=True)
-    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
-    @mock.patch("claude_coop_manager.ensure_tmux_session_ready", autospec=True)
+    @mock.patch("ccm_orchestra.cli.send_message_to_kitty_window", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_paste", autospec=True)
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.ensure_tmux_session_ready", autospec=True)
     def test_deliver_message_to_peer_can_use_headless_tmux_without_kitty(
         self,
         ensure_tmux_session_ready,
@@ -990,7 +990,7 @@ class WeChatPhoneTests(unittest.TestCase):
 
         self.assertEqual(user_id, "alice@im.wechat")
 
-    @mock.patch("claude_coop_manager.wechat_reply", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_reply", autospec=True)
     def test_wechat_queue_reply_only_queues_locally(self, wechat_reply):
         state = ccm.WeChatTransportState(
             token="bot-token",
@@ -1007,7 +1007,7 @@ class WeChatPhoneTests(unittest.TestCase):
         )
         wechat_reply.assert_not_called()
 
-    @mock.patch("claude_coop_manager.wechat_reply", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_reply", autospec=True)
     def test_queue_and_flush_wechat_reply_sends_immediately(self, wechat_reply):
         state = ccm.WeChatTransportState(
             token="bot-token",
@@ -1046,7 +1046,7 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(loaded.bound_alias, "mycel")
         self.assertEqual(loaded.context_tokens["alice@im.wechat"], "ctx-1")
 
-    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_http_json", autospec=True)
     def test_wechat_connect_persists_direct_bot_credentials(self, wechat_http_json):
         wechat_http_json.side_effect = [
             {
@@ -1063,8 +1063,8 @@ class WeChatPhoneTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch("claude_coop_manager.render_qr_png", return_value=Path("/tmp/wechat-qr.png")), \
-             mock.patch("claude_coop_manager.open_qr_preview", autospec=True):
+             mock.patch("ccm_orchestra.cli.render_qr_png", return_value=Path("/tmp/wechat-qr.png")), \
+             mock.patch("ccm_orchestra.cli.open_qr_preview", autospec=True):
             path = Path(tmp) / "transport.json"
             payload = ccm.wechat_connect(
                 state_path=path,
@@ -1079,7 +1079,7 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(saved.account_id, "bot-1")
         self.assertEqual(saved.user_id, "user-1")
 
-    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_http_json", autospec=True)
     def test_wechat_connect_caps_poll_timeout_by_remaining_wait_window(self, wechat_http_json):
         wechat_http_json.side_effect = [
             {
@@ -1091,10 +1091,10 @@ class WeChatPhoneTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch("claude_coop_manager.time.time", side_effect=[100.0, 100.1, 100.2, 101.1, 101.1]), \
-             mock.patch("claude_coop_manager.time.sleep", autospec=True), \
-             mock.patch("claude_coop_manager.render_qr_png", return_value=Path("/tmp/wechat-qr.png")), \
-             mock.patch("claude_coop_manager.open_qr_preview", autospec=True):
+             mock.patch("ccm_orchestra.cli.time.time", side_effect=[100.0, 100.1, 100.2, 101.1, 101.1]), \
+             mock.patch("ccm_orchestra.cli.time.sleep", autospec=True), \
+             mock.patch("ccm_orchestra.cli.render_qr_png", return_value=Path("/tmp/wechat-qr.png")), \
+             mock.patch("ccm_orchestra.cli.open_qr_preview", autospec=True):
             ccm.wechat_connect(
                 state_path=Path(tmp) / "transport.json",
                 open_preview=False,
@@ -1105,7 +1105,7 @@ class WeChatPhoneTests(unittest.TestCase):
         timeout = wechat_http_json.call_args_list[1].kwargs["timeout"]
         self.assertLess(timeout, 5.0)
 
-    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_http_json", autospec=True)
     def test_wechat_connect_can_resume_existing_qrcode(self, wechat_http_json):
         wechat_http_json.return_value = {
             "status": "confirmed",
@@ -1116,8 +1116,8 @@ class WeChatPhoneTests(unittest.TestCase):
         }
 
         with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch("claude_coop_manager.render_qr_png", autospec=True) as render_qr_png, \
-             mock.patch("claude_coop_manager.open_qr_preview", autospec=True) as open_qr_preview:
+             mock.patch("ccm_orchestra.cli.render_qr_png", autospec=True) as render_qr_png, \
+             mock.patch("ccm_orchestra.cli.open_qr_preview", autospec=True) as open_qr_preview:
             path = Path(tmp) / "transport.json"
             payload = ccm.wechat_connect(
                 state_path=path,
@@ -1135,7 +1135,7 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(saved.token, "bot-token")
         self.assertEqual(saved.account_id, "bot-1")
 
-    @mock.patch("claude_coop_manager.subprocess.Popen", autospec=True)
+    @mock.patch("ccm_orchestra.cli.subprocess.Popen", autospec=True)
     def test_launch_wechat_watch_daemon_writes_pidfile_and_returns_paths(self, popen):
         process = mock.Mock()
         process.pid = 43210
@@ -1174,7 +1174,7 @@ class WeChatPhoneTests(unittest.TestCase):
                 },
                 clear=False,
              ), \
-             mock.patch("claude_coop_manager.pid_is_running", return_value=True):
+             mock.patch("ccm_orchestra.cli.pid_is_running", return_value=True):
             Path(tmp, "watch.pid").write_text("43210\n")
             Path(tmp, "watch.json").write_text(json.dumps({"pid": 43210, "heartbeat_at": "2026-03-30T08:00:00Z", "last_error": ""}))
             payload = ccm.wechat_watch_status()
@@ -1184,7 +1184,7 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(payload["heartbeat_at"], "2026-03-30T08:00:00Z")
         self.assertEqual(payload["last_error"], "")
 
-    @mock.patch("claude_coop_manager.os.kill", autospec=True)
+    @mock.patch("ccm_orchestra.cli.os.kill", autospec=True)
     def test_wechat_watch_stop_terminates_running_process_and_clears_pidfile(self, os_kill):
         with tempfile.TemporaryDirectory() as tmp, \
             mock.patch.dict(
@@ -1196,7 +1196,7 @@ class WeChatPhoneTests(unittest.TestCase):
                 },
                 clear=False,
             ), \
-            mock.patch("claude_coop_manager.pid_is_running", return_value=True):
+            mock.patch("ccm_orchestra.cli.pid_is_running", return_value=True):
             pid_path = Path(tmp) / "watch.pid"
             state_path = Path(tmp) / "watch.json"
             pid_path.write_text("43210\n")
@@ -1262,7 +1262,7 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(payload["bound_alias"], "mycel")
         self.assertEqual(payload["saved_at"], "2026-03-30T08:01:02Z")
 
-    @mock.patch("claude_coop_manager.time.strftime", autospec=True, return_value="2026-03-30T09:00:00Z")
+    @mock.patch("ccm_orchestra.cli.time.strftime", autospec=True, return_value="2026-03-30T09:00:00Z")
     def test_save_wechat_transport_state_refreshes_saved_at(self, time_strftime):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "transport.json"
@@ -1302,9 +1302,9 @@ class WeChatPhoneTests(unittest.TestCase):
 
         self.assertEqual(updated.bound_alias, "mycel")
 
-    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
-    @mock.patch("claude_coop_manager.deliver_message_to_peer", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_http_json", autospec=True)
+    @mock.patch("ccm_orchestra.cli.deliver_message_to_peer", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_registered_peer_target", autospec=True)
     def test_wechat_poll_once_delivers_messages_to_bound_peer(
         self,
         resolve_registered_peer_target,
@@ -1366,9 +1366,9 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertIn("hello from phone", sent_message)
         self.assertIn("ccm wechat-reply alice@im.wechat", sent_message)
 
-    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
-    @mock.patch("claude_coop_manager.deliver_message_to_peer", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_http_json", autospec=True)
+    @mock.patch("ccm_orchestra.cli.deliver_message_to_peer", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_registered_peer_target", autospec=True)
     def test_wechat_poll_once_can_deliver_to_headless_claude_peer(
         self,
         resolve_registered_peer_target,
@@ -1432,8 +1432,8 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertIn("local ccm outbox", sent_message)
         self.assertNotIn("<system-reminder>", sent_message)
 
-    @mock.patch("claude_coop_manager.wechat_reply", autospec=True)
-    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_reply", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_http_json", autospec=True)
     def test_wechat_poll_once_flushes_pending_replies_before_waiting_for_updates(
         self,
         wechat_http_json,
@@ -1461,7 +1461,7 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(state.pending_replies, [])
         wechat_reply.assert_called_once_with(state, user_id="alice@im.wechat", text="queued hello")
 
-    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_http_json", autospec=True)
     def test_wechat_reply_uses_saved_context_token(self, wechat_http_json):
         state = ccm.WeChatTransportState(
             token="bot-token",
@@ -1523,9 +1523,9 @@ class WeChatPhoneTests(unittest.TestCase):
 
 
 class CommandBuildTests(unittest.TestCase):
-    @mock.patch("claude_coop_manager.current_cac_claude_details", autospec=True)
-    @mock.patch("claude_coop_manager.Path.exists", autospec=True)
-    @mock.patch("claude_coop_manager.shutil.which", autospec=True)
+    @mock.patch("ccm_orchestra.cli.current_cac_claude_details", autospec=True)
+    @mock.patch("ccm_orchestra.cli.Path.exists", autospec=True)
+    @mock.patch("ccm_orchestra.cli.shutil.which", autospec=True)
     def test_resolve_claude_executable_prefers_cac_wrapper_over_path(
         self,
         which,
@@ -1545,7 +1545,7 @@ class CommandBuildTests(unittest.TestCase):
         which.assert_not_called()
 
     @mock.patch.dict("os.environ", {}, clear=True)
-    @mock.patch("claude_coop_manager.current_cac_claude_details", autospec=True)
+    @mock.patch("ccm_orchestra.cli.current_cac_claude_details", autospec=True)
     def test_launch_environment_defaults_config_root_from_cac(self, current_cac_claude_details):
         current_cac_claude_details.return_value = {
             "actual_path": "/Users/test/.cac/versions/2.1.86/claude",
@@ -1556,7 +1556,7 @@ class CommandBuildTests(unittest.TestCase):
 
         self.assertEqual(env["CLAUDE_CONFIG_DIR"], "/Users/test/.cac/envs/main/.claude")
 
-    @mock.patch("claude_coop_manager.resolve_claude_executable", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_claude_executable", autospec=True)
     def test_build_claude_command_uses_interactive_mode(self, resolve_claude_executable):
         resolve_claude_executable.return_value = "/Users/test/.cac/bin/claude"
         command = ccm.build_claude_command("frontend-helper")
@@ -1568,7 +1568,7 @@ class CommandBuildTests(unittest.TestCase):
         self.assertNotIn("--print", command)
 
     @mock.patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": "/Users/test/.cac/envs/main/.claude"}, clear=False)
-    @mock.patch("claude_coop_manager.resolve_claude_executable", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_claude_executable", autospec=True)
     def test_build_tmux_claude_command_pins_binary_and_config_root(self, resolve_claude_executable):
         resolve_claude_executable.return_value = "/Users/test/.cac/bin/claude"
 
@@ -1607,12 +1607,12 @@ class CommandBuildTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
-    @mock.patch("claude_coop_manager.build_tmux_claude_command", autospec=True)
-    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
-    @mock.patch("claude_coop_manager.ensure_session_ready", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
-    @mock.patch("claude_coop_manager.require_binary", autospec=True)
-    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    @mock.patch("ccm_orchestra.cli.build_tmux_claude_command", autospec=True)
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.ensure_session_ready", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_has_session", autospec=True)
+    @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
     def test_start_session_launches_detached_tmux(
         self,
         run_command,
@@ -1638,12 +1638,12 @@ class LifecycleTests(unittest.TestCase):
         )
         self.assertIn("frontend-helper", state.sessions)
 
-    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_transcript", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_send_enter", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_paste", autospec=True)
-    @mock.patch("claude_coop_manager.ensure_session_ready", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_transcript", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_paste", autospec=True)
+    @mock.patch("ccm_orchestra.cli.ensure_session_ready", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_has_session", autospec=True)
     def test_send_prompt_pastes_and_presses_enter(
         self,
         tmux_has_session,
@@ -1670,9 +1670,9 @@ class LifecycleTests(unittest.TestCase):
         tmux_send_enter.assert_called_once_with("ccm-frontend-helper")
         self.assertEqual(updated.transcript_path, "/tmp/transcript.jsonl")
 
-    @mock.patch("claude_coop_manager.require_binary", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
-    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_has_session", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
     def test_open_in_kitty_launches_marked_tab(self, run_command, tmux_has_session, require_binary):
         tmux_has_session.return_value = True
         run_command.return_value = mock.Mock(stdout="")
@@ -1692,8 +1692,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("[ccm:frontend-helper]", command)
         self.assertEqual(payload["title"], "[ccm:frontend-helper]")
 
-    @mock.patch("claude_coop_manager.workspace_identity", autospec=True)
-    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    @mock.patch("ccm_orchestra.cli.workspace_identity", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
     def test_list_kitty_tabs_includes_workspace_identity(self, run_command, workspace_identity):
         run_command.return_value = mock.Mock(
             stdout=json.dumps(
@@ -1734,8 +1734,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(tabs[0]["helper"], "frontend-helper")
         self.assertEqual(tabs[0]["helper_status"], "running")
 
-    @mock.patch("claude_coop_manager.send_message_to_kitty_tab", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_current_sender_context", autospec=True)
+    @mock.patch("ccm_orchestra.cli.send_message_to_kitty_tab", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_current_sender_context", autospec=True)
     def test_relay_message_to_kitty_tab_wraps_message_with_sender_context(
         self,
         resolve_current_sender_context,
@@ -1771,9 +1771,9 @@ class LifecycleTests(unittest.TestCase):
 
 
 class ReadWaitTests(unittest.TestCase):
-    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
-    @mock.patch("claude_coop_manager.read_incremental_jsonl", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_transcript", autospec=True)
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.read_incremental_jsonl", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_transcript", autospec=True)
     def test_read_updates_waits_for_late_events(self, resolve_transcript, read_incremental_jsonl, _sleep):
         transcript = Path("/tmp/transcript.jsonl")
         resolve_transcript.return_value = transcript
@@ -1798,9 +1798,9 @@ class ReadWaitTests(unittest.TestCase):
         self.assertEqual(events, [{"kind": "assistant", "text": "ready"}])
         self.assertEqual(read_incremental_jsonl.call_count, 2)
 
-    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
-    @mock.patch("claude_coop_manager.candidate_projects_roots", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_transcript", autospec=True)
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.candidate_projects_roots", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_transcript", autospec=True)
     def test_read_updates_reports_search_diagnostics_when_transcript_missing(
         self,
         resolve_transcript,
@@ -1824,9 +1824,9 @@ class ReadWaitTests(unittest.TestCase):
         with self.assertRaisesRegex(ccm.CCMError, "Transcript search roots: /tmp/cac/projects, /tmp/fallback/projects"):
             ccm.read_updates(state, "frontend-helper", wait_seconds=0, poll_interval=1)
 
-    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
-    @mock.patch("claude_coop_manager.read_incremental_jsonl", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_transcript", autospec=True)
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.read_incremental_jsonl", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_transcript", autospec=True)
     def test_read_updates_raw_returns_unrendered_events(self, resolve_transcript, read_incremental_jsonl, _sleep):
         transcript = Path("/tmp/transcript.jsonl")
         resolve_transcript.return_value = transcript
@@ -1855,8 +1855,8 @@ class ReadWaitTests(unittest.TestCase):
 
 
 class DoctorTests(unittest.TestCase):
-    @mock.patch("claude_coop_manager.claude_version_from_binary", autospec=True)
-    @mock.patch("claude_coop_manager.shutil.which", autospec=True)
+    @mock.patch("ccm_orchestra.cli.claude_version_from_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.shutil.which", autospec=True)
     def test_doctor_report_includes_binary_and_state_info(self, which, claude_version_from_binary):
         which.side_effect = lambda name, path=None: f"/usr/bin/{name}"
         claude_version_from_binary.return_value = "Claude Code v2.1.86"
@@ -1878,10 +1878,10 @@ class DoctorTests(unittest.TestCase):
 
 
 class InspectTests(unittest.TestCase):
-    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_capture", autospec=True)
-    @mock.patch("claude_coop_manager.session_status", autospec=True)
-    @mock.patch("claude_coop_manager.resolve_transcript", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_has_session", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_capture", autospec=True)
+    @mock.patch("ccm_orchestra.cli.session_status", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_transcript", autospec=True)
     def test_inspect_session_reports_state_tmux_and_transcript_context(
         self,
         resolve_transcript,
@@ -1919,8 +1919,8 @@ class InspectTests(unittest.TestCase):
 
 
 class CleanupTests(unittest.TestCase):
-    @mock.patch("claude_coop_manager.run_command", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_has_session", autospec=True)
     def test_cleanup_removes_dead_sessions_only_by_default(self, tmux_has_session, run_command):
         tmux_has_session.side_effect = lambda session: session == "ccm-live"
         state = ccm.State(
@@ -1937,8 +1937,8 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(sorted(state.sessions), ["live"])
         run_command.assert_not_called()
 
-    @mock.patch("claude_coop_manager.run_command", autospec=True)
-    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
+    @mock.patch("ccm_orchestra.cli.tmux_has_session", autospec=True)
     def test_cleanup_can_kill_live_sessions(self, tmux_has_session, run_command):
         tmux_has_session.return_value = True
         state = ccm.State(
@@ -1964,9 +1964,9 @@ class KittyMessagingTests(unittest.TestCase):
 
         self.assertEqual(ccm.kitty_window_worktree(window), "/work/canonical")
 
-    @mock.patch("claude_coop_manager.workspace_identity", autospec=True)
-    @mock.patch("claude_coop_manager.require_binary", autospec=True)
-    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    @mock.patch("ccm_orchestra.cli.workspace_identity", autospec=True)
+    @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
     def test_list_kitty_tabs_uses_active_window_per_tab(self, run_command, require_binary, workspace_identity):
         run_command.return_value = mock.Mock(
             stdout=json.dumps(
@@ -2056,9 +2056,9 @@ class KittyMessagingTests(unittest.TestCase):
             ],
         )
 
-    @mock.patch("claude_coop_manager.workspace_identity", autospec=True)
-    @mock.patch("claude_coop_manager.require_binary", autospec=True)
-    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    @mock.patch("ccm_orchestra.cli.workspace_identity", autospec=True)
+    @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
     def test_send_message_to_kitty_tab_injects_text_and_enter(self, run_command, require_binary, workspace_identity):
         run_command.side_effect = [
             mock.Mock(

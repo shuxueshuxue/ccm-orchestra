@@ -56,7 +56,7 @@
 git clone <repo-url>
 cd ccm-orchestra
 
-python3 -m unittest tests/test_claude_coop_manager.py -v
+python3 -m unittest tests/test_cli.py tests/test_heartbeat.py tests/test_smoke.py -v
 
 ccm guide agent
 ccm doctor --cwd "$PWD"
@@ -288,9 +288,9 @@ codex-heartbeat stop --tab-title mycel
 
 `ccm-orchestra` 主要由两层加一个辅助工具组成：
 
-- `tmux` 会话层，由 `claude_coop_manager.py` 负责
+- `tmux` 会话层，由 `ccm_orchestra/cli.py` 负责
   启动和复用交互式 Claude helper，按 worktree 隔离，读取 transcript，并运行 doctor 自检。
-- `kitty` 协作层，也由 `claude_coop_manager.py` 负责
+- `kitty` 协作层，也由 `ccm_orchestra/cli.py` 负责
   列出可见 tab、注入消息，并支持带 reply hint 的 relay 通信。
 - `bin/codex-heartbeat`
   定时向指定 `kitty` tab 注入心跳消息，避免长时间监督时主 Codex 静默掉线。
@@ -317,13 +317,20 @@ ccm-orchestra/
 ├── AGENTS.md
 ├── bin/
 │   ├── ccm
+│   ├── ccm-smoke
 │   └── codex-heartbeat
+├── ccm_orchestra/
+│   ├── __init__.py
+│   ├── cli.py
+│   ├── heartbeat.py
+│   └── smoke.py
 ├── docs/
 │   ├── claude-codex-frontend-playbook.md
 │   └── codex-claude-visible-collab-playbook.md
 ├── tests/
-│   └── test_claude_coop_manager.py
-├── claude_coop_manager.py
+│   ├── test_cli.py
+│   ├── test_heartbeat.py
+│   └── test_smoke.py
 ├── pyproject.toml
 ├── README.md
 └── README.zh-CN.md

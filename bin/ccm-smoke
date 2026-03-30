@@ -1,2 +1,2 @@
 #!/bin/sh
-exec python3 "$(dirname "$0")/../ccm_smoke.py" "$@"
+exec python3 "$(dirname "$0")/../ccm_orchestra/smoke.py" "$@"

@@ -56,7 +56,7 @@ The practical rule is:
 git clone <repo-url>
 cd ccm-orchestra
 
-python3 -m unittest tests/test_claude_coop_manager.py -v
+python3 -m unittest tests/test_cli.py tests/test_heartbeat.py tests/test_smoke.py -v
 
 ccm guide agent
 ccm doctor --cwd "$PWD"
@@ -288,9 +288,9 @@ codex-heartbeat stop --tab-title mycel
 
 `ccm-orchestra` has two main layers plus one small support tool:
 
-- `tmux` session layer, handled by `claude_coop_manager.py`
+- `tmux` session layer, handled by `ccm_orchestra/cli.py`
   Starts and reuses interactive Claude helpers, isolates them by worktree, reads transcripts, and runs doctor checks.
-- `kitty` collaboration layer, also handled by `claude_coop_manager.py`
+- `kitty` collaboration layer, also handled by `ccm_orchestra/cli.py`
   Lists visible tabs, injects messages, and supports reply-friendly relay envelopes between tabs.
 - `bin/codex-heartbeat`
   Sends periodic heartbeat prompts into a target `kitty` tab so long-running supervision does not die quietly.
@@ -350,13 +350,20 @@ ccm-orchestra/
 ├── AGENTS.md
 ├── bin/
 │   ├── ccm
+│   ├── ccm-smoke
 │   └── codex-heartbeat
+├── ccm_orchestra/
+│   ├── __init__.py
+│   ├── cli.py
+│   ├── heartbeat.py
+│   └── smoke.py
 ├── docs/
 │   ├── claude-codex-frontend-playbook.md
 │   └── codex-claude-visible-collab-playbook.md
 ├── tests/
-│   └── test_claude_coop_manager.py
-├── claude_coop_manager.py
+│   ├── test_cli.py
+│   ├── test_heartbeat.py
+│   └── test_smoke.py
 ├── pyproject.toml
 ├── README.md
 └── README.zh-CN.md

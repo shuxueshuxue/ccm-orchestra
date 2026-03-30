@@ -1,2 +1,2 @@
 #!/bin/sh
-exec python3 "$(dirname "$0")/../claude_coop_manager.py" "$@"
+exec python3 "$(dirname "$0")/../ccm_orchestra/cli.py" "$@"
