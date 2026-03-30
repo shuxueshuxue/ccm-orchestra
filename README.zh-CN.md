@@ -2,7 +2,7 @@
 
 [English](./README.md)
 
-`ccm-orchestra` 是一个控制层，用来在 `tmux` 里运行持续的交互式 Claude Code helper，并通过 `kitty` 做可见协作。
+`ccm-orchestra` 是一个控制层，用来在 `tmux` 里运行持续的交互式 Claude Code helper，并通过 `kitty` 做可见协作。两者构成一个配对操作模型：`tmux` 让 helper 持续存活、可复用，`kitty` 让协作过程可见并支持 relay。
 
 核心 loop 很简单：在 detached tmux pane 里启动 helper，给它发 prompt，再从 transcript 里读新输出。Session 按工作目录隔离，所以不同仓库里可以复用同一个 helper 名。`tmux` 层和 `kitty` 层合在一起，才让 Claude Code 和 Codex 能并行协作、互相交接、并在需要时保持可观察。
 
@@ -98,6 +98,11 @@ ccm kill frontend-helper --cwd "$PWD"
 ```bash
 ccm cleanup --cwd "$PWD"
 ```
+
+### 保持一个长期的 Claude 搭档
+
+- 每个可见的 Codex tab 都应该在 tmux 里维护一个长期存活、值得信任的专属 Claude helper，反复复用。不要每做完一件小事就 kill 掉 helper。持久 session 本身就是核心价值。
+- Claude 不只是顾问。它可以直接编辑分支、commit 或 push，尤其适合前端和文档类工作。把它当作有写权限的协作者，而不是只读的建议机器。
 
 ### 启动交互式 Claude Session
 
