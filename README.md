@@ -69,11 +69,17 @@ ccm kill frontend-helper --cwd "$PWD"
 ### 3. Install as a CLI
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -e .
 
 ccm doctor
+ccm-smoke --cwd "$PWD"
 codex-heartbeat status
 ```
+
+Prefer a venv. On many modern systems, system Python is protected by PEP 668, so `pip install -e .` against the global interpreter may be blocked or may mutate a Python you did not intend to touch.
 
 ## Command Guide
 
@@ -101,6 +107,14 @@ If a session crashed or `kill` was interrupted:
 ```bash
 ccm cleanup --cwd "$PWD"
 ```
+
+If you want one command that exercises the basic live path end-to-end:
+
+```bash
+ccm-smoke --cwd "$PWD"
+```
+
+`ccm-smoke` runs a narrow live check: `doctor -> start -> list -> send -> read -> kill -> cleanup`, and also records the current `codex-heartbeat status`. It fails loudly if the helper path does not produce the probe token.
 
 ### Keep a long-lived Claude partner
 

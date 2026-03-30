@@ -69,11 +69,17 @@ ccm kill frontend-helper --cwd "$PWD"
 ### 3. 安装成命令行工具
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -e .
 
 ccm doctor
+ccm-smoke --cwd "$PWD"
 codex-heartbeat status
 ```
+
+优先使用 venv。现在很多系统的系统 Python 会受 PEP 668 保护，所以直接对全局解释器执行 `pip install -e .` 可能会被拒绝，或者把包装到你根本不想动的 Python 里。
 
 ## 命令说明
 
@@ -101,6 +107,14 @@ ccm kill frontend-helper --cwd "$PWD"
 ```bash
 ccm cleanup --cwd "$PWD"
 ```
+
+如果你想用一条命令跑完最基础的 live 自检：
+
+```bash
+ccm-smoke --cwd "$PWD"
+```
+
+`ccm-smoke` 会按很窄的顺序跑一遍：`doctor -> start -> list -> send -> read -> kill -> cleanup`，同时记录当前的 `codex-heartbeat status`。如果 helper 没有读回预期的 probe token，它会直接失败，不会掩盖问题。
 
 ### 保持一个长期的 Claude 搭档
 
