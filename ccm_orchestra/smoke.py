@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_HELPER_NAME = "smoke-helper"
+DEFAULT_AGENT_NAME = "smoke-agent"
 DEFAULT_READ_WAIT_SECONDS = 20.0
 
 
@@ -18,7 +18,7 @@ def build_parser(*, prog: str = "ccm-smoke") -> argparse.ArgumentParser:
         description="Run a live ccm smoke check against the current environment.",
     )
     parser.add_argument("--cwd", default=str(Path.cwd()), help="Namespace/worktree to smoke check.")
-    parser.add_argument("--helper-name", default=DEFAULT_HELPER_NAME)
+    parser.add_argument("--agent-name", default=DEFAULT_AGENT_NAME)
     parser.add_argument("--read-wait-seconds", type=float, default=DEFAULT_READ_WAIT_SECONDS)
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     return parser
@@ -60,27 +60,27 @@ def events_include_token(events: list[dict[str, Any]], token: str) -> bool:
 def first_terminal_failure(events: list[dict[str, Any]]) -> str:
     for event in events:
         if event.get("error") == "rate_limit":
-            return "Claude usage limit blocked the smoke helper before it could echo the probe token."
+            return "Claude usage limit blocked the smoke agent before it could echo the probe token."
         if event.get("error"):
-            return f"Smoke helper returned terminal error: {event.get('error')}"
+            return f"Smoke agent returned terminal error: {event.get('error')}"
     return ""
 
 
 def run_smoke(
     *,
     cwd: str,
-    helper_name: str,
+    agent_name: str,
     read_wait_seconds: float,
     probe_token: str,
 ) -> dict[str, Any]:
     doctor = parse_json_output(run_cli(["ccm", "--json", "--cwd", cwd, "doctor"]))
     heartbeat = heartbeat_status()
-    start = parse_json_output(run_cli(["ccm", "--json", "--cwd", cwd, "start", helper_name]))
+    start = parse_json_output(run_cli(["ccm", "--json", "--cwd", cwd, "start", agent_name]))
     killed = False
     try:
         sessions = parse_json_output(run_cli(["ccm", "--json", "--cwd", cwd, "list"]))
         send = parse_json_output(
-            run_cli(["ccm", "--json", "--cwd", cwd, "send", helper_name, smoke_prompt(probe_token)])
+            run_cli(["ccm", "--json", "--cwd", cwd, "send", agent_name, smoke_prompt(probe_token)])
         )
         events = parse_json_output(
             run_cli(
@@ -90,7 +90,7 @@ def run_smoke(
                     "--cwd",
                     cwd,
                     "read",
-                    helper_name,
+                    agent_name,
                     "--wait-seconds",
                     str(read_wait_seconds),
                     "--raw",
@@ -102,13 +102,13 @@ def run_smoke(
             raise RuntimeError(terminal_failure)
         if not events_include_token(events, probe_token):
             raise RuntimeError(f"Smoke read completed but did not contain probe token: {probe_token}")
-        kill = parse_json_output(run_cli(["ccm", "--json", "--cwd", cwd, "kill", helper_name]))
+        kill = parse_json_output(run_cli(["ccm", "--json", "--cwd", cwd, "kill", agent_name]))
         killed = True
         cleanup = parse_json_output(run_cli(["ccm", "--json", "--cwd", cwd, "cleanup"]))
         return {
             "ok": True,
             "cwd": cwd,
-            "helper_name": helper_name,
+            "agent_name": agent_name,
             "probe_token": probe_token,
             "doctor": doctor,
             "heartbeat": heartbeat,
@@ -121,7 +121,7 @@ def run_smoke(
         }
     finally:
         if not killed:
-            run_cli(["ccm", "--json", "--cwd", cwd, "kill", helper_name], check=False)
+            run_cli(["ccm", "--json", "--cwd", cwd, "kill", agent_name], check=False)
             run_cli(["ccm", "--json", "--cwd", cwd, "cleanup"], check=False)
 
 
@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     probe_token = f"CCM_SMOKE_ACK_{int(time.time())}"
     payload = run_smoke(
         cwd=args.cwd,
-        helper_name=args.helper_name,
+        agent_name=args.agent_name,
         read_wait_seconds=args.read_wait_seconds,
         probe_token=probe_token,
     )
@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"ok: {payload['ok']}")
         print(f"cwd: {payload['cwd']}")
-        print(f"helper_name: {payload['helper_name']}")
+        print(f"agent_name: {payload['agent_name']}")
         print(f"probe_token: {payload['probe_token']}")
         print(f"heartbeat_running: {payload['heartbeat']['running']}")
         print(f"events: {len(payload['events'])}")

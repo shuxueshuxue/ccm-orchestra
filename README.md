@@ -4,21 +4,21 @@
 
 [中文说明](./README.zh-CN.md)
 
-`ccm-orchestra` is a control plane for running persistent, interactive Claude Code helpers in `tmux` and coordinating visible collaboration through `kitty`. Together they form a paired operating model: `tmux` keeps the helper alive and reusable, `kitty` makes the collaboration visible and relay-capable.
+`ccm-orchestra` is a control plane for running persistent, interactive Claude Code agents in `tmux` and coordinating visible collaboration between code agents through `kitty`. Together they form a paired operating model: `tmux` keeps an agent alive and reusable, `kitty` makes the collaboration visible and relay-capable.
 
-The core loop is simple: start a helper in a detached tmux pane, send it prompts, and read its transcript. Sessions are isolated by working directory, so the same helper name can coexist across repos. Together, the `tmux` layer and the `kitty` layer let Claude Code and Codex work in parallel, hand work back and forth, and stay observable when needed.
+The core loop is simple: start an agent in a detached tmux pane, send it prompts, and read its transcript. Sessions are isolated by working directory, so the same agent name can coexist across repos. Together, the `tmux` layer and the `kitty` layer let Claude Code, Codex, and other code agents work in parallel, hand work back and forth, and stay observable when needed.
 
 ## The Two Layers
 
 This system has two clearly different layers:
 
-- `tmux` layer: the real session layer. It keeps interactive Claude Code alive, isolates it by worktree, and lets Codex reuse the same helper over time.
+- `tmux` layer: the real session layer. It keeps interactive Claude Code alive, isolates it by worktree, and lets Codex reuse the same agent over time.
 - `kitty` layer: the visible collaboration layer. It lets humans and other agents see selected sessions, list visible peers, and exchange messages with receipt-friendly envelopes.
 
 If you remember only one thing, remember this:
 
 - `tmux` and `kitty` are two distinct capabilities, and they can work independently or together
-- the default helper loop is in the `tmux` layer: `start -> send -> read`
+- the default agent loop is in the `tmux` layer: `start -> send -> read`
 - the `kitty` layer makes visible coordination, relay, and human observation possible
 
 The wakeup model is different across the two layers:
@@ -40,7 +40,7 @@ The practical rule is:
 
 - the canonical path is interactive Claude in `tmux`
 - `tmux` then gives us the process boundary we want for reuse, transcript reading, inspection, restart, and cleanup
-- the same interactive helper can be approached from both sides: humans can attach and inspect it, while programmatic tooling can still send, read, doctor, restart, and supervise it
+- the same interactive agent can be approached from both sides: humans can attach and inspect it, while programmatic tooling can still send, read, doctor, restart, and supervise it
 - do not build the main workflow around `claude -p`
 
 ## Quickstart
@@ -62,11 +62,11 @@ python3 -m unittest tests/test_cli.py tests/test_heartbeat.py tests/test_smoke.p
 
 ccm guide agent
 ccm doctor --cwd "$PWD"
-ccm start frontend-helper --cwd "$PWD"
-ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
-ccm read frontend-helper --wait-seconds 20 --cwd "$PWD"
-ccm inspect frontend-helper --cwd "$PWD"
-ccm kill frontend-helper --cwd "$PWD"
+ccm start frontend-agent --cwd "$PWD"
+ccm send frontend-agent "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
+ccm read frontend-agent --wait-seconds 20 --cwd "$PWD"
+ccm inspect frontend-agent --cwd "$PWD"
+ccm kill frontend-agent --cwd "$PWD"
 ```
 
 ### 3. Install as a CLI
@@ -89,11 +89,11 @@ Prefer a venv. On many modern systems, system Python is protected by PEP 668, so
 
 ### Canonical rule
 
-Use the global `ccm` only. If a helper starts failing after a Claude or `ccm` upgrade:
+Use the global `ccm` only. If an agent starts failing after a Claude or `ccm` upgrade:
 
 1. Run `ccm doctor --cwd "$PWD"`.
 2. Check for `@@@claude-path-mismatch` / `@@@claude-version-mismatch`.
-3. Restart the helper. Existing helpers keep the binary and config root they started with.
+3. Restart the agent. Existing agents keep the binary and config root they started with.
 
 If you are an agent or another LLM, run `ccm guide agent` before you improvise. That guide contains the longer operating rules, the tmux vs kitty split, and the wakeup model.
 
@@ -102,10 +102,10 @@ Use `--state-path /abs/path/state.json` only when you intentionally want one exp
 ### Minimal everyday usage
 
 ```bash
-ccm start frontend-helper --cwd "$PWD"
-ccm send frontend-helper "Review the frontend in this branch and propose improvements." --cwd "$PWD"
-ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"
-ccm kill frontend-helper --cwd "$PWD"
+ccm start frontend-agent --cwd "$PWD"
+ccm send frontend-agent "Review the frontend in this branch and propose improvements." --cwd "$PWD"
+ccm read frontend-agent --wait-seconds 30 --cwd "$PWD"
+ccm kill frontend-agent --cwd "$PWD"
 ```
 
 If a session crashed or `kill` was interrupted:
@@ -120,12 +120,12 @@ If you want one command that exercises the basic live path end-to-end:
 ccm-smoke --cwd "$PWD"
 ```
 
-`ccm-smoke` runs a narrow live check: `doctor -> start -> list -> send -> read -> kill -> cleanup`, and also records the current `codex-heartbeat status`. It fails loudly if the helper path does not produce the probe token.
+`ccm-smoke` runs a narrow live check: `doctor -> start -> list -> send -> read -> kill -> cleanup`, and also records the current `codex-heartbeat status`. It fails loudly if the agent path does not produce the probe token.
 
 If `read` comes back empty or transcript resolution still looks suspicious, inspect the live session instead of guessing:
 
 ```bash
-ccm inspect frontend-helper --cwd "$PWD"
+ccm inspect frontend-agent --cwd "$PWD"
 ```
 
 That prints the state path, tmux session, resolved transcript path, transcript search roots, and a recent pane tail.
@@ -133,7 +133,7 @@ That prints the state path, tmux session, resolved transcript path, transcript s
 If you need the unrendered transcript stream for advanced Claude behavior, MCP traces, or tool debugging:
 
 ```bash
-ccm read frontend-helper --raw --json --cwd "$PWD"
+ccm read frontend-agent --raw --json --cwd "$PWD"
 ```
 
 If you need to discover forgotten sessions across every saved namespace instead of only the current one:
@@ -144,8 +144,8 @@ ccm list --all-scopes --json
 
 ### Keep a long-lived Claude partner
 
-- Each visible Codex tab should usually keep one dedicated, trusted Claude helper in tmux and reuse it over time. Do not kill the helper after every small task. The persistent session is the point.
-- Name helpers by job and keep the names specific, for example `frontend-helper` or `docs-editor`. Avoid reusing a vague name that already exists in the current namespace.
+- Each visible Codex tab should usually keep one dedicated, trusted Claude agent in tmux and reuse it over time. Do not kill the agent after every small task. The persistent session is the point.
+- Name agents by job and keep the names specific, for example `frontend-agent` or `docs-editor`. Avoid reusing a vague name that already exists in the current namespace.
 - Claude is not just an advisor. It can directly edit the branch, commit, or push, especially for frontend and documentation work. Treat it as a collaborator with write access, not a read-only consultant.
 
 ### Start an interactive Claude session
@@ -153,21 +153,21 @@ ccm list --all-scopes --json
 Uses the current directory by default:
 
 ```bash
-ccm start frontend-helper
+ccm start frontend-agent
 ```
 
 Or target a specific directory:
 
 ```bash
-ccm --cwd ~/Codebase/leonai/frontend start frontend-helper
+ccm --cwd ~/Codebase/leonai/frontend start frontend-agent
 ```
 
 ### Reuse the same namespace later
 
 ```bash
 ccm --cwd ~/Codebase/leonai/frontend list
-ccm --cwd ~/Codebase/leonai/frontend send frontend-helper "Critique the new layout."
-ccm --cwd ~/Codebase/leonai/frontend read frontend-helper --wait-seconds 30
+ccm --cwd ~/Codebase/leonai/frontend send frontend-agent "Critique the new layout."
+ccm --cwd ~/Codebase/leonai/frontend read frontend-agent --wait-seconds 30
 ```
 
 ### Check environment health
@@ -176,21 +176,21 @@ ccm --cwd ~/Codebase/leonai/frontend read frontend-helper --wait-seconds 30
 ccm doctor
 ```
 
-### Open a helper only when you actually need to look
+### Open an agent only when you actually need to look
 
 `open` is not part of the normal loop. Use it only when transcript output is not enough:
 
-- debugging a stuck helper
+- debugging a stuck agent
 - supervised live observation
 - deliberate visible-tab collaboration
 
 ```bash
-ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm open frontend-agent --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
 ### Use visible kitty tabs as peers
 
-`kitty` is the visible collaboration layer. It is not the helper runtime itself, but it is a first-class part of the system when humans, Codex, and Claude need to watch each other and exchange messages live.
+`kitty` is the visible collaboration layer. It is not the agent runtime itself, but it is a first-class part of the system when humans, Codex, and Claude need to watch each other and exchange messages live.
 
 ```bash
 ccm tabs --listen-on unix:/tmp/mykitty
@@ -201,11 +201,11 @@ ccm relay "feat/main-thread-for-member" "Use Claude to review the UI and report 
   --scene "untouched"
 ```
 
-`ccm tabs` now shows the peer tab title together with its resolved worktree, git branch, and helper identity. `ccm relay` wraps the message with a default envelope and a `reply-via` hint so a newcomer can answer without learning extra ceremony.
+`ccm tabs` now shows the peer tab title together with its resolved worktree, git branch, and agent identity. `ccm relay` wraps the message with a default envelope and a `reply-via` hint so a newcomer can answer without learning extra ceremony.
 
 This is also the wakeup-safe path for agents in visible tabs:
 
-- use `ccm read` when waiting on Claude helper output from the `tmux` layer
+- use `ccm read` when waiting on Claude agent output from the `tmux` layer
 - use `ccm relay` when another visible tab needs to wake up and reply
 
 ### Use the wechat-style peer layer with direct targets
@@ -214,7 +214,7 @@ Use one address language everywhere:
 - `kitty:<tab-title>`
 - `tmux:<session-name>`
 
-Visible tabs do not need a registry. Headless helpers do not need fake aliases. Pick the right target directly:
+Visible tabs do not need a registry. Headless agents do not need fake aliases. Pick the right target directly:
 
 ```bash
 ccm wechat-targets --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
@@ -227,7 +227,7 @@ ccm wechat-shift kitty:scheduled-tasks "Take ownership of the next frontend simp
 For headless Claude/tmux peers, target the session directly instead of opening a visible kitty tab just for WeChat:
 
 ```bash
-ccm wechat-send tmux:ccm-frontend-helper-abcd1234 "Please take over this phone thread." --cwd "$PWD"
+ccm wechat-send tmux:ccm-frontend-agent-abcd1234 "Please take over this phone thread." --cwd "$PWD"
 ```
 
 `wechat-shift` is the real handoff primitive. If the sender currently owns the phone thread, `ccm wechat-shift <target> "..."` also moves phone ownership to that target and sends a handoff notice back to the phone user.
@@ -293,7 +293,7 @@ codex-heartbeat stop --tab-title mycel
 `ccm-orchestra` has two main layers plus one small support tool:
 
 - `tmux` session layer, handled by `ccm_orchestra/cli.py`
-  Starts and reuses interactive Claude helpers, isolates them by worktree, reads transcripts, and runs doctor checks.
+  Starts and reuses interactive Claude agents, isolates them by worktree, reads transcripts, and runs doctor checks.
 - `kitty` collaboration layer, also handled by `ccm_orchestra/cli.py`
   Lists visible tabs, injects messages, and supports reply-friendly relay envelopes between tabs.
 - `bin/codex-heartbeat`
@@ -316,20 +316,20 @@ The orchestration strategy is intentionally narrow:
 
 ## Troubleshooting
 
-### Helper keeps hitting 502 after Claude upgrades
+### Agent keeps hitting 502 after Claude upgrades
 
-If `ccm read ...` shows repeated `api_error status=502` and the helper looks "stuck", do not assume the current shell and the tmux helper are running the same Claude binary.
+If `ccm read ...` shows repeated `api_error status=502` and the agent looks "stuck", do not assume the current shell and the tmux agent are running the same Claude binary.
 
 We hit a real case where:
 
 - the current shell resolved `claude` to `~/.cac/bin/claude` (`Claude Code 2.1.86`)
-- an older helper tmux pane had been started earlier with `/opt/homebrew/bin/claude` (`Claude Code 2.1.81`)
-- the old helper kept failing until it was restarted
+- an older agent tmux pane had been started earlier with `/opt/homebrew/bin/claude` (`Claude Code 2.1.81`)
+- the old agent kept failing until it was restarted
 
 Why this happens:
 
-- `ccm` now resolves and pins the Claude executable path when starting a helper
-- but helpers that were already running before that fix keep whatever binary they originally launched
+- `ccm` now resolves and pins the Claude executable path when starting an agent
+- but agents that were already running before that fix keep whatever binary they originally launched
 - tmux server environment can also keep an old `PATH`, so checking `which claude` in your current shell is not enough
 
 What to do:
@@ -339,13 +339,13 @@ What to do:
 2. Run doctor in the target namespace:
    `ccm doctor --cwd "$PWD"`
    If it reports `@@@claude-path-mismatch` or `@@@claude-version-mismatch`, your tmux server would launch a different Claude than the current shell.
-3. If the helper predates a Claude or `ccm` upgrade, restart that helper:
-   `ccm kill frontend-helper`
-   `ccm start frontend-helper --cwd "$PWD"`
+3. If the agent predates a Claude or `ccm` upgrade, restart that agent:
+   `ccm kill frontend-agent`
+   `ccm start frontend-agent --cwd "$PWD"`
 4. Then read again:
-   `ccm read frontend-helper --wait-seconds 30`
+   `ccm read frontend-agent --wait-seconds 30`
 
-The key rule: if a helper was started before a Claude-path fix or binary upgrade, restart the helper itself. Do not trust the current shell's `which claude` as proof that the running tmux helper is current.
+The key rule: if an agent was started before a Claude-path fix or binary upgrade, restart the agent itself. Do not trust the current shell's `which claude` as proof that the running tmux agent is current.
 
 ## Repository Layout
 

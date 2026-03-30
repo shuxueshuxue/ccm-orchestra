@@ -80,9 +80,9 @@ class WeChatTargetRecord:
     repo_root: str
     branch: str
     tmux_session: str
-    helper: str
-    helper_status: str
-    helper_transcript: str
+    agent: str
+    agent_status: str
+    agent_transcript: str
     runtime: str
 
 
@@ -699,10 +699,10 @@ def workspace_identity(cwd: str) -> dict[str, str]:
             "worktree": "",
             "repo_root": "",
             "branch": "",
-            "helper": "",
-            "helper_status": "",
-            "helper_tmux_session": "",
-            "helper_transcript": "",
+            "agent": "",
+            "agent_status": "",
+            "agent_tmux_session": "",
+            "agent_transcript": "",
         }
 
     resolved_cwd = namespace_cwd(cwd)
@@ -718,10 +718,10 @@ def workspace_identity(cwd: str) -> dict[str, str]:
         "worktree": resolved_cwd,
         "repo_root": repo_root,
         "branch": branch,
-        "helper": session.name if session is not None else "",
-        "helper_status": session_status(session) if session is not None else "",
-        "helper_tmux_session": session.tmux_session if session is not None else "",
-        "helper_transcript": transcript,
+        "agent": session.name if session is not None else "",
+        "agent_status": session_status(session) if session is not None else "",
+        "agent_tmux_session": session.tmux_session if session is not None else "",
+        "agent_transcript": transcript,
     }
 
 
@@ -831,7 +831,7 @@ def doctor_report(state: State, cwd: str, state_path: Path) -> dict[str, Any]:
     launch_probe = {
         "claude_path": resolve_claude_executable() if shutil.which("claude") else "",
         "claude_config_dir": launch_environment().get("CLAUDE_CONFIG_DIR", ""),
-        "tmux_command": build_tmux_claude_command("frontend-helper") if shutil.which("claude") else "",
+        "tmux_command": build_tmux_claude_command("frontend-agent") if shutil.which("claude") else "",
     }
     warnings: list[str] = []
     if tmux_probe["claude_path"] and tmux_probe["claude_path"] != shell_probe["claude_path"]:
@@ -1064,10 +1064,10 @@ def list_kitty_tabs(listen_on: str | None) -> list[dict[str, str]]:
                     "cmdline": " ".join(active_window.get("cmdline", [])),
                     "branch": identity["branch"],
                     "repo_root": identity["repo_root"],
-                    "helper": identity["helper"],
-                    "helper_status": identity["helper_status"],
-                    "helper_tmux_session": identity["helper_tmux_session"],
-                    "helper_transcript": identity["helper_transcript"],
+                    "agent": identity["agent"],
+                    "agent_status": identity["agent_status"],
+                    "agent_tmux_session": identity["agent_tmux_session"],
+                    "agent_transcript": identity["agent_transcript"],
                 }
             )
     return tabs
@@ -1192,9 +1192,9 @@ def format_relay_message(
         ("branch", sender.get("branch", "")),
         ("repo", sender.get("repo_root", "")),
         ("task", task or sender.get("branch", "") or sender.get("title", "")),
-        ("helper", sender.get("helper", "")),
-        ("tmux", sender.get("helper_tmux_session", "")),
-        ("transcript", sender.get("helper_transcript", "")),
+        ("agent", sender.get("agent", "")),
+        ("tmux", sender.get("agent_tmux_session", "")),
+        ("transcript", sender.get("agent_transcript", "")),
         ("ports", ports),
         ("scene", scene),
         ("reply-via", f'ccm relay {shlex.quote(reply_target)} "..."'),
@@ -1715,11 +1715,11 @@ def wechat_watch_stop() -> dict[str, Any]:
     return {"stopped": True, "pid": pid}
 
 
-def infer_runtime_label(cmdline: str, helper: str, tmux_session: str) -> str:
+def infer_runtime_label(cmdline: str, agent: str, tmux_session: str) -> str:
     lowered = (cmdline or "").lower()
     if "codex" in lowered:
         return "codex"
-    if "claude" in lowered or helper or tmux_session.startswith("ccm-"):
+    if "claude" in lowered or agent or tmux_session.startswith("ccm-"):
         return "claude"
     if tmux_session:
         return "tmux"
@@ -1754,11 +1754,11 @@ def resolve_target_spec(target: str, *, listen_on: str | None, cwd: str) -> WeCh
             worktree=tab["cwd"],
             repo_root=tab["repo_root"],
             branch=tab["branch"],
-            tmux_session=tab["helper_tmux_session"],
-            helper=tab["helper"],
-            helper_status=tab["helper_status"],
-            helper_transcript=tab["helper_transcript"],
-            runtime=infer_runtime_label(tab["cmdline"], tab["helper"], tab["helper_tmux_session"]),
+            tmux_session=tab["agent_tmux_session"],
+            agent=tab["agent"],
+            agent_status=tab["agent_status"],
+            agent_transcript=tab["agent_transcript"],
+            runtime=infer_runtime_label(tab["cmdline"], tab["agent"], tab["agent_tmux_session"]),
         )
 
     session_name = spec.value
@@ -1775,10 +1775,10 @@ def resolve_target_spec(target: str, *, listen_on: str | None, cwd: str) -> WeCh
         repo_root=identity["repo_root"],
         branch=identity["branch"],
         tmux_session=session_name,
-        helper=identity["helper"],
-        helper_status=identity["helper_status"],
-        helper_transcript=identity["helper_transcript"],
-        runtime=infer_runtime_label("", identity["helper"], session_name),
+        agent=identity["agent"],
+        agent_status=identity["agent_status"],
+        agent_transcript=identity["agent_transcript"],
+        runtime=infer_runtime_label("", identity["agent"], session_name),
     )
 
 
@@ -1824,10 +1824,10 @@ def format_wechat_prompt(
     ]
     if sender.tmux_session:
         parts.append(f"  <tmux-session>{escape(sender.tmux_session)}</tmux-session>")
-    if sender.helper:
-        parts.append(f"  <helper>{escape(sender.helper)}</helper>")
-    if sender.helper_transcript:
-        parts.append(f"  <transcript>{escape(sender.helper_transcript)}</transcript>")
+    if sender.agent:
+        parts.append(f"  <agent>{escape(sender.agent)}</agent>")
+    if sender.agent_transcript:
+        parts.append(f"  <transcript>{escape(sender.agent_transcript)}</transcript>")
     if task:
         parts.append(f"  <task>{escape(task)}</task>")
     if scene:
@@ -1854,10 +1854,10 @@ def wechat_targets_payload(*, cwd: str, listen_on: str | None, all_scopes: bool 
                 "target": f"kitty:{tab['title']}",
                 "kind": "kitty",
                 "title": tab["title"],
-                "runtime": infer_runtime_label(tab["cmdline"], tab["helper"], tab["helper_tmux_session"]),
+                "runtime": infer_runtime_label(tab["cmdline"], tab["agent"], tab["agent_tmux_session"]),
                 "worktree": tab["cwd"],
                 "branch": tab["branch"],
-                "tmux_session": tab["helper_tmux_session"],
+                "tmux_session": tab["agent_tmux_session"],
             }
         )
     session_records: list[SessionRecord] = []
@@ -1884,7 +1884,7 @@ def wechat_targets_payload(*, cwd: str, listen_on: str | None, all_scopes: bool 
                 "target": f"tmux:{record.tmux_session}",
                 "kind": "tmux",
                 "title": record.display_name,
-                "runtime": infer_runtime_label("", identity["helper"], record.tmux_session),
+                "runtime": infer_runtime_label("", identity["agent"], record.tmux_session),
                 "worktree": record.cwd,
                 "branch": identity["branch"],
                 "tmux_session": record.tmux_session,
@@ -1906,7 +1906,7 @@ def render_wechat_guide(audience: str) -> str:
             For phone onboarding:
             - ccm wechat-connect
             - Scan the QR code with your phone
-            - ccm wechat-bind kitty:<tab-title>   (or tmux:<session-name> for a headless helper)
+            - ccm wechat-bind kitty:<tab-title>   (or tmux:<session-name> for a headless agent)
             - ccm wechat-watch --detach
             - ccm wechat-watch-status
             - ccm wechat-reply <user_id> "..."
@@ -1937,7 +1937,7 @@ def render_wechat_guide(audience: str) -> str:
         2. Tell them to scan the QR code with their phone.
         3. Choose one direct target:
            - visible tab: `kitty:<tab-title>`
-           - headless helper: `tmux:<session-name>`
+           - headless agent: `tmux:<session-name>`
         4. Run `ccm wechat-bind <target>`.
         5. Run `ccm wechat-watch --detach`.
         6. Check `ccm wechat-watch-status`.
@@ -2119,12 +2119,12 @@ def render_guide(audience: str) -> str:
             Daily loop: start -> send -> read
 
             1. ccm doctor --cwd "$PWD"
-            2. ccm start frontend-helper --cwd "$PWD"
-            3. ccm send frontend-helper "..." --cwd "$PWD"
-            4. ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"
+            2. ccm start frontend-agent --cwd "$PWD"
+            3. ccm send frontend-agent "..." --cwd "$PWD"
+            4. ccm read frontend-agent --wait-seconds 30 --cwd "$PWD"
 
-            Keep the helper alive when the tab will keep collaborating with it.
-            Do not kill and recreate the helper after every small task unless you are
+            Keep the agent alive when the tab will keep collaborating with it.
+            Do not kill and recreate the agent after every small task unless you are
             explicitly resetting the scene.
 
             Use ccm guide agent when you want the longer operating rules for agents and LLMs.
@@ -2142,18 +2142,18 @@ def render_guide(audience: str) -> str:
         - Use global `ccm` only. Do not use repo-local launchers.
         - Run `ccm doctor --cwd "$PWD"` before blaming ccm.
         - If doctor reports `@@@claude-path-mismatch` or `@@@claude-version-mismatch`,
-          restart the helper.
+          restart the agent.
         - Use `--state-path ...` only when you deliberately want one explicit state file
           instead of the normal cwd-derived namespace.
 
         Core model:
-        - tmux layer = the real helper/session layer.
+        - tmux layer = the real agent/session layer.
         - kitty layer = the visible collaboration layer.
-        - These are paired capabilities. tmux keeps the helper alive and reusable.
+        - These are paired capabilities. tmux keeps the agent alive and reusable.
           kitty makes the collaboration visible and relay-capable.
 
         Wakeup model:
-        - `ccm read` is poll-based. It waits on Claude transcript output from the tmux helper.
+        - `ccm read` is poll-based. It waits on Claude transcript output from the tmux agent.
         - `ccm relay` is push-based. It wakes another visible tab and gives it enough sender
           context to reply later.
         - Do not expect `read` to wake another agent tab for you.
@@ -2166,22 +2166,22 @@ def render_guide(audience: str) -> str:
 
         Recommended operating pattern:
         - Each visible Codex tab should usually keep one dedicated, trusted, long-lived Claude
-          helper in tmux and reuse it over time.
-        - Pick a specific helper name per job, such as `frontend-helper` or
-          `docs-editor`. Avoid colliding with helper names that already exist in the
+          agent in tmux and reuse it over time.
+        - Pick a specific agent name per job, such as `frontend-agent` or
+          `docs-editor`. Avoid colliding with agent names that already exist in the
           current namespace.
-        - Do not kill the helper after every small task. The persistent session is the point.
+        - Do not kill the agent after every small task. The persistent session is the point.
         - Claude is not just an advisor. It can directly edit the branch too, especially for
           frontend and documentation work.
 
         Normal loop:
         1. `ccm doctor --cwd "$PWD"`
-        2. `ccm start frontend-helper --cwd "$PWD"`
-        3. `ccm send frontend-helper "..." --cwd "$PWD"`
-        4. `ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"`
+        2. `ccm start frontend-agent --cwd "$PWD"`
+        3. `ccm send frontend-agent "..." --cwd "$PWD"`
+        4. `ccm read frontend-agent --wait-seconds 30 --cwd "$PWD"`
 
         If `read` is empty or transcript resolution looks wrong:
-        - run `ccm inspect frontend-helper --cwd "$PWD"`
+        - run `ccm inspect frontend-agent --cwd "$PWD"`
         - look at the transcript search roots and pane tail before guessing
 
         Heartbeat notes:
@@ -2190,14 +2190,14 @@ def render_guide(audience: str) -> str:
           want to verify the kitty push path without starting a background loop.
 
         Use `ccm open` only when:
-        - the helper looks stuck and transcript output is not enough
+        - the agent looks stuck and transcript output is not enough
         - you want supervised live observation
         - you are deliberately doing visible-tab collaboration
 
         Use `ccm relay` instead of `ccm tell` when:
         - you are an agent inside kitty
         - you expect a useful reply or acknowledgment
-        - the receiver needs sender identity, worktree, branch, helper, or scene context
+        - the receiver needs sender identity, worktree, branch, agent, or scene context
         """
     ).strip()
 
@@ -2206,13 +2206,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ccm",
         description=(
-            "Manage interactive Claude Code sessions for Codex. tmux is the persistent "
-            "session layer; kitty is the optional visible collaboration layer."
+            "Manage interactive Claude Code agents in tmux and coordinate visible "
+            "collaboration between code agents in kitty."
         ),
         epilog=(
             "Daily loop: start -> send -> read. Use interactive Claude sessions in tmux, "
             "not non-interactive print mode. Use 'open' only when the transcript is not "
-            "enough: debugging a stuck helper, live observation, or deliberate visible-tab "
+            "enough: debugging a stuck agent, live observation, or deliberate visible-tab "
             "collaboration. For agents/LLMs, run 'ccm guide agent' for the longer operating "
             "rules."
         ),
@@ -2229,8 +2229,8 @@ def build_parser() -> argparse.ArgumentParser:
         "start",
         help="tmux layer: start a persistent interactive Claude session",
         description=(
-            "Start a helper in the current namespace. Pick a specific helper name such as "
-            "'frontend-helper' or 'docs-editor'. Avoid colliding with helper names that "
+            "Start an agent in the current namespace. Pick a specific agent name such as "
+            "'frontend-agent' or 'docs-editor'. Avoid colliding with agent names that "
             "already exist in the current namespace."
         ),
     )
@@ -2260,10 +2260,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     read_parser = subparsers.add_parser(
         "read",
-        help="tmux layer: poll unread transcript events from the helper",
+        help="tmux layer: poll unread transcript events from the agent",
         description=(
             "Read is a poll-based wait on Claude transcript output. It does not push a wakeup "
-            "into another agent tab. Use it when you are waiting for helper output from the tmux "
+            "into another agent tab. Use it when you are waiting for agent output from the tmux "
             "session itself. If you need another visible tab to wake up and answer later, use "
             "'relay' or a heartbeat-style push mechanism instead. Use --raw when you need "
             "unrendered transcript events for MCP/tool-trace debugging."
@@ -2299,11 +2299,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     open_parser = subparsers.add_parser(
         "open",
-        help="kitty layer: open a visible tab for a managed helper when debugging or observing live output",
+        help="kitty layer: open a visible tab for a managed agent when debugging or observing live output",
         description=(
             "Open is an exception tool, not part of the everyday loop. Prefer "
             "'start -> send -> read' for normal work. Use 'open' only when you need "
-            "live observation, visible-tab collaboration, or to debug a stuck helper."
+            "live observation, visible-tab collaboration, or to debug a stuck agent."
         ),
     )
     open_parser.add_argument("name")
@@ -2408,7 +2408,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     wechat_targets_parser = subparsers.add_parser(
         "wechat-targets",
-        help="List direct wechat targets such as visible kitty tabs and managed tmux helpers",
+        help="List direct wechat targets such as visible kitty tabs and managed tmux agents",
     )
     wechat_targets_parser.add_argument("--listen-on")
     wechat_targets_parser.add_argument("--all-scopes", action="store_true")

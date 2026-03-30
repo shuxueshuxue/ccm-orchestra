@@ -6,18 +6,18 @@ Before you improvise, run `ccm guide agent`. That is the long-form operator guid
 
 This system has two layers:
 
-- `tmux` layer: the default path for persistent interactive Claude helpers
+- `tmux` layer: the default path for persistent interactive Claude agents
 - `kitty` layer: optional visible collaboration between tabs
 
 ## Default tmux Loop
 
 ```bash
-ccm start frontend-helper --cwd "$PWD"
-ccm send frontend-helper "Review the frontend in this branch and propose improvements." --cwd "$PWD"
-ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"
+ccm start frontend-agent --cwd "$PWD"
+ccm send frontend-agent "Review the frontend in this branch and propose improvements." --cwd "$PWD"
+ccm read frontend-agent --wait-seconds 30 --cwd "$PWD"
 ```
 
-Keep the helper if this tab will keep working with it. Do not kill and recreate it after every small turn unless you are deliberately resetting the scene.
+Keep the agent if this tab will keep working with it. Do not kill and recreate it after every small turn unless you are deliberately resetting the scene.
 
 ## Optional kitty Layer
 
@@ -25,7 +25,7 @@ Keep the helper if this tab will keep working with it. Do not kill and recreate 
 ccm tabs --listen-on "${KITTY_LISTEN_ON}"
 ccm relay "main" "I am online and ready for tasking." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD" --scene "untouched"
 ccm tell "scheduled-tasks" "Please summarize your current frontend direction." --listen-on "${KITTY_LISTEN_ON}"
-ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm open frontend-agent --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
 ## Wechat-Style Peer Layer
@@ -40,10 +40,10 @@ Use one direct target language:
 - `kitty:<tab-title>`
 - `tmux:<session-name>`
 
-For a headless Claude/tmux helper, target the tmux session directly:
+For a headless Claude/tmux agent, target the tmux session directly:
 
 ```bash
-ccm wechat-send tmux:ccm-frontend-helper-abcd1234 "Please take over the phone thread." --cwd "$PWD"
+ccm wechat-send tmux:ccm-frontend-agent-abcd1234 "Please take over the phone thread." --cwd "$PWD"
 ```
 
 `ccm wechat-shift <target> "..."` is the real handoff primitive. If you currently own the phone thread, shift also rebinds phone ownership to that target and emits a short handoff notice to the phone user.
@@ -67,8 +67,8 @@ ccm list --cwd "$PWD"
 ccm list --all-scopes --json
 ccm cleanup --cwd "$PWD"
 ccm doctor --cwd "$PWD"
-ccm inspect frontend-helper --cwd "$PWD"
-ccm read frontend-helper --raw --json --cwd "$PWD"
+ccm inspect frontend-agent --cwd "$PWD"
+ccm read frontend-agent --raw --json --cwd "$PWD"
 codex-heartbeat test --tab-title mycel
 ```
 
@@ -76,9 +76,9 @@ codex-heartbeat test --tab-title mycel
 
 - Always pass `--cwd "$PWD"` unless you intentionally want another namespace.
 - Use `--state-path /abs/path/state.json` only when you intentionally want one explicit state file instead of the normal cwd-derived namespace.
-- Pick helper names by job and keep them specific. Avoid colliding with helper names that already exist in the current namespace.
+- Pick agent names by job and keep them specific. Avoid colliding with agent names that already exist in the current namespace.
 - Prefer `ccm read` over scraping terminal text.
-- If `ccm read` is empty or transcript resolution lags, run `ccm inspect <helper> --cwd "$PWD"` before guessing. It shows transcript search roots and recent pane tail.
+- If `ccm read` is empty or transcript resolution lags, run `ccm inspect <agent> --cwd "$PWD"` before guessing. It shows transcript search roots and recent pane tail.
 - Use `ccm read --raw --json` when you need unrendered transcript events for MCP/tool-trace debugging.
 - Use `ccm list --all-scopes --json` when the session you want may live in another saved namespace.
 - Prefer `ccm relay` over `ccm tell` when coordinating with another visible tab. `relay` auto-includes sender context and a reply hint.

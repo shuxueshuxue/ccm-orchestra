@@ -10,7 +10,7 @@ from ccm_orchestra import cli as ccm
 
 class SanitizeNameTests(unittest.TestCase):
     def test_sanitize_name_normalizes_spaces_and_symbols(self):
-        self.assertEqual(ccm.sanitize_name("Frontend Helper #1"), "frontend-helper-1")
+        self.assertEqual(ccm.sanitize_name("Frontend Agent #1"), "frontend-agent-1")
 
     def test_sanitize_name_rejects_empty_result(self):
         with self.assertRaises(ValueError):
@@ -162,7 +162,7 @@ class TranscriptResolutionTests(unittest.TestCase):
                 + "\n"
             )
             right.write_text(
-                json.dumps({"type": "custom-title", "customTitle": "frontend-helper", "sessionId": "right"})
+                json.dumps({"type": "custom-title", "customTitle": "frontend-agent", "sessionId": "right"})
                 + "\n"
                 + json.dumps({"type": "user", "cwd": "/work/app", "sessionId": "right"})
                 + "\n"
@@ -170,7 +170,7 @@ class TranscriptResolutionTests(unittest.TestCase):
 
             match = ccm.find_transcript_file(
                 projects_root=root,
-                display_name="frontend-helper",
+                display_name="frontend-agent",
                 cwd="/work/app",
                 started_after=0.0,
             )
@@ -237,27 +237,27 @@ class TranscriptResolutionTests(unittest.TestCase):
     def test_describe_transcript_search_lists_roots_and_identity(self, candidate_projects_roots):
         candidate_projects_roots.return_value = [Path("/tmp/cac/projects"), Path("/tmp/fallback/projects")]
         record = ccm.SessionRecord(
-            name="frontend-helper",
-            tmux_session="ccm-frontend-helper",
-            display_name="frontend-helper",
+            name="frontend-agent",
+            tmux_session="ccm-frontend-agent",
+            display_name="frontend-agent",
             cwd="/work/app",
             started_at=123.0,
         )
 
         payload = ccm.describe_transcript_search(record)
 
-        self.assertEqual(payload["display_name"], "frontend-helper")
+        self.assertEqual(payload["display_name"], "frontend-agent")
         self.assertEqual(payload["cwd"], "/work/app")
         self.assertEqual(payload["projects_roots"], ["/tmp/cac/projects", "/tmp/fallback/projects"])
 
 
 class NamespaceTests(unittest.TestCase):
     def test_tmux_session_name_includes_cwd_fingerprint(self):
-        first = ccm.build_tmux_session_name("frontend-helper", "/work/a")
-        second = ccm.build_tmux_session_name("frontend-helper", "/work/b")
+        first = ccm.build_tmux_session_name("frontend-agent", "/work/a")
+        second = ccm.build_tmux_session_name("frontend-agent", "/work/b")
 
         self.assertNotEqual(first, second)
-        self.assertTrue(first.startswith("ccm-frontend-helper-"))
+        self.assertTrue(first.startswith("ccm-frontend-agent-"))
 
     def test_default_state_path_isolated_by_cwd(self):
         first = ccm.default_state_path("/work/a")
@@ -291,10 +291,10 @@ class NamespaceTests(unittest.TestCase):
                     {
                         "version": 1,
                         "sessions": {
-                            "frontend-helper": {
-                                "name": "frontend-helper",
-                                "tmux_session": "ccm-frontend-helper-aa11",
-                                "display_name": "frontend-helper",
+                            "frontend-agent": {
+                                "name": "frontend-agent",
+                                "tmux_session": "ccm-frontend-agent-aa11",
+                                "display_name": "frontend-agent",
                                 "cwd": "/work/a",
                                 "started_at": 1.0,
                             }
@@ -326,8 +326,8 @@ class NamespaceTests(unittest.TestCase):
             payload,
             [
                 {
-                    "name": "frontend-helper",
-                    "tmux_session": "ccm-frontend-helper-aa11",
+                    "name": "frontend-agent",
+                    "tmux_session": "ccm-frontend-agent-aa11",
                     "cwd": "/work/a",
                     "status": "running",
                     "transcript": "-",
@@ -400,13 +400,13 @@ class MainDispatchTests(unittest.TestCase):
     @mock.patch("ccm_orchestra.cli.load_state", autospec=True)
     def test_main_can_list_all_scopes(self, load_state, list_sessions_all_scopes, emit):
         load_state.return_value = ccm.State()
-        list_sessions_all_scopes.return_value = [{"name": "frontend-helper"}]
+        list_sessions_all_scopes.return_value = [{"name": "frontend-agent"}]
 
         exit_code = ccm.main(["list", "--all-scopes", "--json"])
 
         self.assertEqual(exit_code, 0)
         list_sessions_all_scopes.assert_called_once_with(ccm.DEFAULT_HOME_ROOT)
-        emit.assert_called_once_with([{"name": "frontend-helper"}], as_json=True)
+        emit.assert_called_once_with([{"name": "frontend-agent"}], as_json=True)
 
 
 class ParserHelpTests(unittest.TestCase):
@@ -436,9 +436,9 @@ class ParserHelpTests(unittest.TestCase):
         start_parser = parser._subparsers._group_actions[0].choices["start"]
         help_text = start_parser.format_help()
 
-        self.assertIn("specific helper name", help_text)
+        self.assertIn("specific agent name", help_text)
         self.assertIn("current namespace", help_text)
-        self.assertIn("frontend-helper", help_text)
+        self.assertIn("frontend-agent", help_text)
 
     def test_relay_help_marks_relay_as_preferred_over_tell_for_agents(self):
         parser = ccm.build_parser()
@@ -490,7 +490,7 @@ class ParserHelpTests(unittest.TestCase):
 
 
 class GuideOutputTests(unittest.TestCase):
-    def test_render_agent_guide_covers_long_lived_helper_and_relay(self):
+    def test_render_agent_guide_covers_long_lived_agent_and_relay(self):
         guide_text = ccm.render_guide("agent")
 
         self.assertIn("global `ccm` only", guide_text)
@@ -526,12 +526,12 @@ class WeChatPeerTests(unittest.TestCase):
 
     def test_parse_target_spec_supports_kitty_and_tmux(self):
         kitty = ccm.parse_target_spec("kitty:scheduled-tasks")
-        tmux = ccm.parse_target_spec("tmux:ccm-frontend-helper-abcd1234")
+        tmux = ccm.parse_target_spec("tmux:ccm-frontend-agent-abcd1234")
 
         self.assertEqual(kitty.kind, "kitty")
         self.assertEqual(kitty.value, "scheduled-tasks")
         self.assertEqual(tmux.kind, "tmux")
-        self.assertEqual(tmux.value, "ccm-frontend-helper-abcd1234")
+        self.assertEqual(tmux.value, "ccm-frontend-agent-abcd1234")
 
     def test_parse_target_spec_rejects_unknown_scheme(self):
         with self.assertRaises(ccm.CCMError):
@@ -547,10 +547,10 @@ class WeChatPeerTests(unittest.TestCase):
                 "cmdline": "codex",
                 "branch": "feat/scheduled",
                 "repo_root": "/work",
-                "helper": "",
-                "helper_status": "",
-                "helper_tmux_session": "",
-                "helper_transcript": "",
+                "agent": "",
+                "agent_status": "",
+                "agent_tmux_session": "",
+                "agent_transcript": "",
             }
         ]
 
@@ -563,13 +563,13 @@ class WeChatPeerTests(unittest.TestCase):
 
     @mock.patch("ccm_orchestra.cli.tmux_has_session", autospec=True, return_value=True)
     def test_resolve_target_spec_allows_headless_tmux_peer(self, tmux_has_session):
-        target = ccm.resolve_target_spec("tmux:ccm-frontend-helper-abcd1234", listen_on=None, cwd="/work/ccm")
+        target = ccm.resolve_target_spec("tmux:ccm-frontend-agent-abcd1234", listen_on=None, cwd="/work/ccm")
 
-        self.assertEqual(target.target, "tmux:ccm-frontend-helper-abcd1234")
+        self.assertEqual(target.target, "tmux:ccm-frontend-agent-abcd1234")
         self.assertEqual(target.kind, "tmux")
-        self.assertEqual(target.tmux_session, "ccm-frontend-helper-abcd1234")
+        self.assertEqual(target.tmux_session, "ccm-frontend-agent-abcd1234")
         self.assertEqual(target.runtime, "claude")
-        tmux_has_session.assert_called_once_with("ccm-frontend-helper-abcd1234")
+        tmux_has_session.assert_called_once_with("ccm-frontend-agent-abcd1234")
 
     def test_format_wechat_prompt_includes_target_reply_and_shift_instructions(self):
         sender = ccm.WeChatTargetRecord(
@@ -581,9 +581,9 @@ class WeChatPeerTests(unittest.TestCase):
             repo_root="/work",
             branch="feat/demo",
             tmux_session="",
-            helper="frontend-helper",
-            helper_status="running",
-            helper_transcript="/tmp/demo.jsonl",
+            agent="frontend-agent",
+            agent_status="running",
+            agent_transcript="/tmp/demo.jsonl",
             runtime="codex",
         )
 
@@ -613,9 +613,9 @@ class WeChatPeerTests(unittest.TestCase):
             repo_root="/work",
             branch="feat/demo",
             tmux_session="",
-            helper="frontend-helper",
-            helper_status="running",
-            helper_transcript="/tmp/demo.jsonl",
+            agent="frontend-agent",
+            agent_status="running",
+            agent_transcript="/tmp/demo.jsonl",
             runtime="codex",
         )
 
@@ -649,9 +649,9 @@ class WeChatPeerTests(unittest.TestCase):
             repo_root="/work",
             branch="main",
             tmux_session="",
-            helper="",
-            helper_status="",
-            helper_transcript="",
+            agent="",
+            agent_status="",
+            agent_transcript="",
             runtime="codex",
         )
         resolve_target_spec.return_value = ccm.WeChatTargetRecord(
@@ -663,9 +663,9 @@ class WeChatPeerTests(unittest.TestCase):
             repo_root="/work",
             branch="feat/scheduled",
             tmux_session="",
-            helper="",
-            helper_status="",
-            helper_transcript="",
+            agent="",
+            agent_status="",
+            agent_transcript="",
             runtime="codex",
         )
         send_message_to_kitty_window.return_value = {"title": "scheduled-tasks", "window_id": "498", "endpoint": "unix:/tmp/mykitty"}
@@ -705,29 +705,29 @@ class WeChatPeerTests(unittest.TestCase):
             repo_root="/work/main",
             branch="main",
             tmux_session="",
-            helper="",
-            helper_status="",
-            helper_transcript="",
+            agent="",
+            agent_status="",
+            agent_transcript="",
             runtime="codex",
         )
         resolve_target_spec.return_value = ccm.WeChatTargetRecord(
-            target="tmux:ccm-frontend-helper-abcd1234",
+            target="tmux:ccm-frontend-agent-abcd1234",
             kind="tmux",
-            title="[ccm:frontend-helper]",
+            title="[ccm:frontend-agent]",
             window_id="562",
             worktree="/work/ccm",
             repo_root="/work/ccm",
             branch="main",
-            tmux_session="ccm-frontend-helper-abcd1234",
-            helper="frontend-helper",
-            helper_status="running",
-            helper_transcript="/tmp/helper.jsonl",
+            tmux_session="ccm-frontend-agent-abcd1234",
+            agent="frontend-agent",
+            agent_status="running",
+            agent_transcript="/tmp/agent.jsonl",
             runtime="claude",
         )
-        send_message_to_kitty_window.return_value = {"title": "[ccm:frontend-helper]", "window_id": "562", "endpoint": "unix:/tmp/mykitty"}
+        send_message_to_kitty_window.return_value = {"title": "[ccm:frontend-agent]", "window_id": "562", "endpoint": "unix:/tmp/mykitty"}
 
         ccm.wechat_send_to_peer(
-            target="tmux:ccm-frontend-helper-abcd1234",
+            target="tmux:ccm-frontend-agent-abcd1234",
             message="Take over the phone thread.",
             listen_on="unix:/tmp/mykitty",
             cwd="/work/main",
@@ -737,8 +737,8 @@ class WeChatPeerTests(unittest.TestCase):
         sent_message = send_message_to_kitty_window.call_args.args[1]
         self.assertNotIn("\n", sent_message)
         self.assertIn("<system-reminder>", sent_message)
-        ensure_tmux_session_ready.assert_called_once_with("ccm-frontend-helper-abcd1234")
-        tmux_send_enter.assert_called_once_with("ccm-frontend-helper-abcd1234")
+        ensure_tmux_session_ready.assert_called_once_with("ccm-frontend-agent-abcd1234")
+        tmux_send_enter.assert_called_once_with("ccm-frontend-agent-abcd1234")
 
     @mock.patch("ccm_orchestra.cli.send_message_to_kitty_window", autospec=True)
     @mock.patch("ccm_orchestra.cli.resolve_sender_target", autospec=True)
@@ -760,9 +760,9 @@ class WeChatPeerTests(unittest.TestCase):
             repo_root="/work/main",
             branch="main",
             tmux_session="",
-            helper="",
-            helper_status="",
-            helper_transcript="",
+            agent="",
+            agent_status="",
+            agent_transcript="",
             runtime="codex",
         )
         transport = ccm.WeChatTransportState(
@@ -772,17 +772,17 @@ class WeChatPeerTests(unittest.TestCase):
             bound_target="kitty:mycel",
         )
         resolve_target_spec.return_value = ccm.WeChatTargetRecord(
-            target="tmux:ccm-frontend-helper-abcd1234",
+            target="tmux:ccm-frontend-agent-abcd1234",
             kind="tmux",
             title="claude-handoff",
             window_id="",
             worktree="/work/ccm",
             repo_root="/work/ccm",
             branch="main",
-            tmux_session="ccm-frontend-helper-abcd1234",
-            helper="frontend-helper",
-            helper_status="running",
-            helper_transcript="/tmp/helper.jsonl",
+            tmux_session="ccm-frontend-agent-abcd1234",
+            agent="frontend-agent",
+            agent_status="running",
+            agent_transcript="/tmp/agent.jsonl",
             runtime="claude",
         )
         send_message_to_kitty_window.return_value = {"window_id": "536", "endpoint": "unix:/tmp/mykitty"}
@@ -792,7 +792,7 @@ class WeChatPeerTests(unittest.TestCase):
              mock.patch("ccm_orchestra.cli.tmux_paste", autospec=True), \
              mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True):
             payload = ccm.wechat_send_to_peer(
-                target="tmux:ccm-frontend-helper-abcd1234",
+                target="tmux:ccm-frontend-agent-abcd1234",
                 message="Take over the phone thread.",
                 listen_on="unix:/tmp/mykitty",
                 cwd="/work/main",
@@ -800,13 +800,13 @@ class WeChatPeerTests(unittest.TestCase):
                 transport=transport,
             )
 
-        self.assertEqual(transport.bound_target, "tmux:ccm-frontend-helper-abcd1234")
+        self.assertEqual(transport.bound_target, "tmux:ccm-frontend-agent-abcd1234")
         self.assertEqual(payload["phone_handoff"], "true")
-        self.assertEqual(payload["phone_bound_target"], "tmux:ccm-frontend-helper-abcd1234")
+        self.assertEqual(payload["phone_bound_target"], "tmux:ccm-frontend-agent-abcd1234")
         self.assertEqual(payload["phone_notice_user_id"], "alice@im.wechat")
         wechat_reply.assert_called_once()
         self.assertEqual(wechat_reply.call_args.kwargs["user_id"], "alice@im.wechat")
-        self.assertIn("tmux:ccm-frontend-helper-abcd1234", wechat_reply.call_args.kwargs["text"])
+        self.assertIn("tmux:ccm-frontend-agent-abcd1234", wechat_reply.call_args.kwargs["text"])
 
     @mock.patch("ccm_orchestra.cli.send_message_to_kitty_window", autospec=True)
     @mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True)
@@ -822,28 +822,28 @@ class WeChatPeerTests(unittest.TestCase):
         send_message_to_kitty_window,
     ):
         target = ccm.WeChatTargetRecord(
-            target="tmux:ccm-frontend-helper-abcd1234",
+            target="tmux:ccm-frontend-agent-abcd1234",
             kind="tmux",
             title="claude-handoff",
             window_id="",
             worktree="/work/ccm",
             repo_root="/work/ccm",
             branch="main",
-            tmux_session="ccm-frontend-helper-abcd1234",
-            helper="frontend-helper",
-            helper_status="running",
-            helper_transcript="/tmp/helper.jsonl",
+            tmux_session="ccm-frontend-agent-abcd1234",
+            agent="frontend-agent",
+            agent_status="running",
+            agent_transcript="/tmp/agent.jsonl",
             runtime="claude",
         )
 
         payload = ccm.deliver_message_to_target(target, "HEADLESS_DELIVERY_TEST", listen_on="unix:/tmp/mykitty")
 
-        ensure_tmux_session_ready.assert_called_once_with("ccm-frontend-helper-abcd1234")
-        tmux_paste.assert_called_once_with("ccm-frontend-helper-abcd1234", "HEADLESS_DELIVERY_TEST")
+        ensure_tmux_session_ready.assert_called_once_with("ccm-frontend-agent-abcd1234")
+        tmux_paste.assert_called_once_with("ccm-frontend-agent-abcd1234", "HEADLESS_DELIVERY_TEST")
         time_sleep.assert_called_once()
-        tmux_send_enter.assert_called_once_with("ccm-frontend-helper-abcd1234")
+        tmux_send_enter.assert_called_once_with("ccm-frontend-agent-abcd1234")
         send_message_to_kitty_window.assert_not_called()
-        self.assertEqual(payload["tmux_session"], "ccm-frontend-helper-abcd1234")
+        self.assertEqual(payload["tmux_session"], "ccm-frontend-agent-abcd1234")
 
     def test_render_wechat_guide_for_agent_covers_phone_onboarding(self):
         guide_text = ccm.render_wechat_guide("agent")
@@ -1134,13 +1134,13 @@ class WeChatPhoneTests(unittest.TestCase):
             persisted = ccm.WeChatTransportState(
                 token="same-token",
                 account_id="bot-1",
-                bound_target="tmux:ccm-frontend-helper-abcd1234",
+                bound_target="tmux:ccm-frontend-agent-abcd1234",
             )
             ccm.save_wechat_transport_state(persisted, path)
 
             ccm.guard_wechat_transport_state(current, path)
 
-        self.assertEqual(current.bound_target, "tmux:ccm-frontend-helper-abcd1234")
+        self.assertEqual(current.bound_target, "tmux:ccm-frontend-agent-abcd1234")
 
     def test_save_wechat_transport_state_guarded_preserves_newer_bound_target(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1148,7 +1148,7 @@ class WeChatPhoneTests(unittest.TestCase):
             current = ccm.WeChatTransportState(
                 token="same-token",
                 account_id="bot-1",
-                bound_target="tmux:ccm-frontend-helper-abcd1234",
+                bound_target="tmux:ccm-frontend-agent-abcd1234",
             )
             persisted = ccm.WeChatTransportState(token="same-token", account_id="bot-1", bound_target="kitty:mycel")
             ccm.save_wechat_transport_state(persisted, path)
@@ -1222,9 +1222,9 @@ class WeChatPhoneTests(unittest.TestCase):
             repo_root="/work",
             branch="feat/scheduled",
             tmux_session="",
-            helper="",
-            helper_status="",
-            helper_transcript="",
+            agent="",
+            agent_status="",
+            agent_transcript="",
             runtime="codex",
         )
         deliver_message_to_target.return_value = {"window_id": "498", "title": "scheduled-tasks"}
@@ -1269,23 +1269,23 @@ class WeChatPhoneTests(unittest.TestCase):
             token="bot-token",
             account_id="bot-1",
             user_id="user-1",
-            bound_target="tmux:ccm-frontend-helper-abcd1234",
+            bound_target="tmux:ccm-frontend-agent-abcd1234",
         )
         resolve_target_spec.return_value = ccm.WeChatTargetRecord(
-            target="tmux:ccm-frontend-helper-abcd1234",
+            target="tmux:ccm-frontend-agent-abcd1234",
             kind="tmux",
             title="claude-handoff",
             window_id="",
             worktree="/work/ccm",
             repo_root="/work/ccm",
             branch="main",
-            tmux_session="ccm-frontend-helper-abcd1234",
-            helper="frontend-helper",
-            helper_status="running",
-            helper_transcript="/tmp/helper.jsonl",
+            tmux_session="ccm-frontend-agent-abcd1234",
+            agent="frontend-agent",
+            agent_status="running",
+            agent_transcript="/tmp/agent.jsonl",
             runtime="claude",
         )
-        deliver_message_to_target.return_value = {"window_id": "", "tmux_session": "ccm-frontend-helper-abcd1234"}
+        deliver_message_to_target.return_value = {"window_id": "", "tmux_session": "ccm-frontend-agent-abcd1234"}
         wechat_http_json.return_value = {
             "ret": 0,
             "errcode": 0,
@@ -1309,7 +1309,7 @@ class WeChatPhoneTests(unittest.TestCase):
 
         self.assertEqual(payload["delivered_count"], 1)
         self.assertEqual(state.sync_buf, "cursor-2")
-        self.assertEqual(deliver_message_to_target.call_args.args[0].target, "tmux:ccm-frontend-helper-abcd1234")
+        self.assertEqual(deliver_message_to_target.call_args.args[0].target, "tmux:ccm-frontend-agent-abcd1234")
         sent_message = deliver_message_to_target.call_args.args[1]
         self.assertIn("headless phone hello", sent_message)
         self.assertIn("ccm wechat-queue-reply alice@im.wechat", sent_message)
@@ -1394,7 +1394,7 @@ class WeChatPhoneTests(unittest.TestCase):
         rendered = ccm.format_incoming_wechat_prompt(
             user_id="alice@im.wechat",
             text="hello from phone",
-            bound_target="tmux:ccm-frontend-helper-abcd1234",
+            bound_target="tmux:ccm-frontend-agent-abcd1234",
             reply_command='ccm wechat-queue-reply alice@im.wechat "..."',
             runtime="claude",
         )
@@ -1402,7 +1402,7 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertIn("Phone message for your currently bound ccm thread.", rendered)
         self.assertIn("local ccm outbox", rendered)
         self.assertIn("ccm wechat-queue-reply alice@im.wechat", rendered)
-        self.assertIn("bound_target: tmux:ccm-frontend-helper-abcd1234", rendered)
+        self.assertIn("bound_target: tmux:ccm-frontend-agent-abcd1234", rendered)
         self.assertNotIn("<system-reminder>", rendered)
 
 
@@ -1443,7 +1443,7 @@ class CommandBuildTests(unittest.TestCase):
     @mock.patch("ccm_orchestra.cli.resolve_claude_executable", autospec=True)
     def test_build_claude_command_uses_interactive_mode(self, resolve_claude_executable):
         resolve_claude_executable.return_value = "/Users/test/.cac/bin/claude"
-        command = ccm.build_claude_command("frontend-helper")
+        command = ccm.build_claude_command("frontend-agent")
 
         self.assertEqual(
             command[:3],
@@ -1456,7 +1456,7 @@ class CommandBuildTests(unittest.TestCase):
     def test_build_tmux_claude_command_pins_binary_and_config_root(self, resolve_claude_executable):
         resolve_claude_executable.return_value = "/Users/test/.cac/bin/claude"
 
-        command = ccm.build_tmux_claude_command("frontend-helper")
+        command = ccm.build_tmux_claude_command("frontend-agent")
 
         self.assertIn("env", command)
         self.assertIn("CLAUDE_CONFIG_DIR=/Users/test/.cac/envs/main/.claude", command)
@@ -1468,9 +1468,9 @@ class CommandBuildTests(unittest.TestCase):
             "worktree": "/work/app",
             "branch": "feat/demo",
             "repo_root": "/work",
-            "helper": "frontend-helper",
-            "helper_tmux_session": "ccm-frontend-helper-1234",
-            "helper_transcript": "/tmp/demo.jsonl",
+            "agent": "frontend-agent",
+            "agent_tmux_session": "ccm-frontend-agent-1234",
+            "agent_transcript": "/tmp/demo.jsonl",
         }
 
         rendered = ccm.format_relay_message(
@@ -1484,8 +1484,8 @@ class CommandBuildTests(unittest.TestCase):
         self.assertIn("[from: main", rendered)
         self.assertIn("worktree: /work/app", rendered)
         self.assertIn("branch: feat/demo", rendered)
-        self.assertIn("helper: frontend-helper", rendered)
-        self.assertIn("tmux: ccm-frontend-helper-1234", rendered)
+        self.assertIn("agent: frontend-agent", rendered)
+        self.assertIn("tmux: ccm-frontend-agent-1234", rendered)
         self.assertIn('reply-via: ccm relay main "..."', rendered)
         self.assertTrue(rendered.endswith("Please review the current frontend."))
 
@@ -1507,20 +1507,20 @@ class LifecycleTests(unittest.TestCase):
         build_tmux_claude_command,
     ):
         tmux_has_session.return_value = False
-        build_tmux_claude_command.return_value = "env CLAUDE_CONFIG_DIR=/Users/test/.cac/envs/main/.claude /Users/test/.cac/bin/claude --dangerously-skip-permissions -n frontend-helper"
+        build_tmux_claude_command.return_value = "env CLAUDE_CONFIG_DIR=/Users/test/.cac/envs/main/.claude /Users/test/.cac/bin/claude --dangerously-skip-permissions -n frontend-agent"
         state = ccm.State()
 
-        record = ccm.start_session(state, "frontend-helper", "/work/app")
+        record = ccm.start_session(state, "frontend-agent", "/work/app")
 
-        self.assertEqual(record.tmux_session, ccm.build_tmux_session_name("frontend-helper", "/work/app"))
+        self.assertEqual(record.tmux_session, ccm.build_tmux_session_name("frontend-agent", "/work/app"))
         command = run_command.call_args_list[0].args[0]
         self.assertEqual(command[:6], ["tmux", "new-session", "-d", "-s", record.tmux_session, "-c"])
         self.assertEqual(command[6], "/work/app")
         self.assertEqual(
             command[7],
-            "env CLAUDE_CONFIG_DIR=/Users/test/.cac/envs/main/.claude /Users/test/.cac/bin/claude --dangerously-skip-permissions -n frontend-helper",
+            "env CLAUDE_CONFIG_DIR=/Users/test/.cac/envs/main/.claude /Users/test/.cac/bin/claude --dangerously-skip-permissions -n frontend-agent",
         )
-        self.assertIn("frontend-helper", state.sessions)
+        self.assertIn("frontend-agent", state.sessions)
 
     @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
     @mock.patch("ccm_orchestra.cli.resolve_transcript", autospec=True)
@@ -1540,18 +1540,18 @@ class LifecycleTests(unittest.TestCase):
         tmux_has_session.return_value = True
         resolve_transcript.return_value = Path("/tmp/transcript.jsonl")
         record = ccm.SessionRecord(
-            name="frontend-helper",
-            tmux_session="ccm-frontend-helper",
-            display_name="frontend-helper",
+            name="frontend-agent",
+            tmux_session="ccm-frontend-agent",
+            display_name="frontend-agent",
             cwd="/work/app",
             started_at=0.0,
         )
-        state = ccm.State(sessions={"frontend-helper": record})
+        state = ccm.State(sessions={"frontend-agent": record})
 
-        updated = ccm.send_prompt(state, "frontend-helper", "build the page")
+        updated = ccm.send_prompt(state, "frontend-agent", "build the page")
 
-        tmux_paste.assert_called_once_with("ccm-frontend-helper", "build the page")
-        tmux_send_enter.assert_called_once_with("ccm-frontend-helper")
+        tmux_paste.assert_called_once_with("ccm-frontend-agent", "build the page")
+        tmux_send_enter.assert_called_once_with("ccm-frontend-agent")
         self.assertEqual(updated.transcript_path, "/tmp/transcript.jsonl")
 
     @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
@@ -1561,20 +1561,20 @@ class LifecycleTests(unittest.TestCase):
         tmux_has_session.return_value = True
         run_command.return_value = mock.Mock(stdout="")
         record = ccm.SessionRecord(
-            name="frontend-helper",
-            tmux_session="ccm-frontend-helper",
-            display_name="frontend-helper",
+            name="frontend-agent",
+            tmux_session="ccm-frontend-agent",
+            display_name="frontend-agent",
             cwd="/work/app",
             started_at=0.0,
         )
-        state = ccm.State(sessions={"frontend-helper": record})
+        state = ccm.State(sessions={"frontend-agent": record})
 
-        payload = ccm.open_in_kitty(state, "frontend-helper", "unix:/tmp/mykitty")
+        payload = ccm.open_in_kitty(state, "frontend-agent", "unix:/tmp/mykitty")
 
         command = run_command.call_args.args[0]
         self.assertEqual(command[:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "launch"])
-        self.assertIn("[ccm:frontend-helper]", command)
-        self.assertEqual(payload["title"], "[ccm:frontend-helper]")
+        self.assertIn("[ccm:frontend-agent]", command)
+        self.assertEqual(payload["title"], "[ccm:frontend-agent]")
 
     @mock.patch("ccm_orchestra.cli.workspace_identity", autospec=True)
     @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
@@ -1604,10 +1604,10 @@ class LifecycleTests(unittest.TestCase):
             "worktree": "/work/app",
             "repo_root": "/work",
             "branch": "feat/demo",
-            "helper": "frontend-helper",
-            "helper_status": "running",
-            "helper_tmux_session": "ccm-frontend-helper-1234",
-            "helper_transcript": "/tmp/demo.jsonl",
+            "agent": "frontend-agent",
+            "agent_status": "running",
+            "agent_tmux_session": "ccm-frontend-agent-1234",
+            "agent_transcript": "/tmp/demo.jsonl",
         }
 
         tabs = ccm.list_kitty_tabs("unix:/tmp/mykitty")
@@ -1615,8 +1615,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(len(tabs), 1)
         self.assertEqual(tabs[0]["title"], "feat/main-thread-for-member")
         self.assertEqual(tabs[0]["branch"], "feat/demo")
-        self.assertEqual(tabs[0]["helper"], "frontend-helper")
-        self.assertEqual(tabs[0]["helper_status"], "running")
+        self.assertEqual(tabs[0]["agent"], "frontend-agent")
+        self.assertEqual(tabs[0]["agent_status"], "running")
 
     @mock.patch("ccm_orchestra.cli.send_message_to_kitty_tab", autospec=True)
     @mock.patch("ccm_orchestra.cli.resolve_current_sender_context", autospec=True)
@@ -1630,10 +1630,10 @@ class LifecycleTests(unittest.TestCase):
             "worktree": "/work/app",
             "repo_root": "/work",
             "branch": "feat/demo",
-            "helper": "frontend-helper",
-            "helper_status": "running",
-            "helper_tmux_session": "ccm-frontend-helper-1234",
-            "helper_transcript": "/tmp/demo.jsonl",
+            "agent": "frontend-agent",
+            "agent_status": "running",
+            "agent_tmux_session": "ccm-frontend-agent-1234",
+            "agent_transcript": "/tmp/demo.jsonl",
         }
         send_message_to_kitty_tab.return_value = {"title": "target", "window_id": "550", "endpoint": "unix:/tmp/mykitty"}
 
@@ -1667,17 +1667,17 @@ class ReadWaitTests(unittest.TestCase):
         ]
         state = ccm.State(
             sessions={
-                "frontend-helper": ccm.SessionRecord(
-                    name="frontend-helper",
-                    tmux_session="ccm-frontend-helper",
-                    display_name="frontend-helper",
+                "frontend-agent": ccm.SessionRecord(
+                    name="frontend-agent",
+                    tmux_session="ccm-frontend-agent",
+                    display_name="frontend-agent",
                     cwd="/work/app",
                     started_at=0.0,
                 )
             }
         )
 
-        events = ccm.read_updates(state, "frontend-helper", wait_seconds=3, poll_interval=1)
+        events = ccm.read_updates(state, "frontend-agent", wait_seconds=3, poll_interval=1)
 
         self.assertEqual(events, [{"kind": "assistant", "text": "ready"}])
         self.assertEqual(read_incremental_jsonl.call_count, 2)
@@ -1695,10 +1695,10 @@ class ReadWaitTests(unittest.TestCase):
         candidate_projects_roots.return_value = [Path("/tmp/cac/projects"), Path("/tmp/fallback/projects")]
         state = ccm.State(
             sessions={
-                "frontend-helper": ccm.SessionRecord(
-                    name="frontend-helper",
-                    tmux_session="ccm-frontend-helper",
-                    display_name="frontend-helper",
+                "frontend-agent": ccm.SessionRecord(
+                    name="frontend-agent",
+                    tmux_session="ccm-frontend-agent",
+                    display_name="frontend-agent",
                     cwd="/work/app",
                     started_at=0.0,
                 )
@@ -1706,7 +1706,7 @@ class ReadWaitTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ccm.CCMError, "Transcript search roots: /tmp/cac/projects, /tmp/fallback/projects"):
-            ccm.read_updates(state, "frontend-helper", wait_seconds=0, poll_interval=1)
+            ccm.read_updates(state, "frontend-agent", wait_seconds=0, poll_interval=1)
 
     @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
     @mock.patch("ccm_orchestra.cli.read_incremental_jsonl", autospec=True)
@@ -1723,17 +1723,17 @@ class ReadWaitTests(unittest.TestCase):
         read_incremental_jsonl.return_value = ([raw_event], 10, "")
         state = ccm.State(
             sessions={
-                "frontend-helper": ccm.SessionRecord(
-                    name="frontend-helper",
-                    tmux_session="ccm-frontend-helper",
-                    display_name="frontend-helper",
+                "frontend-agent": ccm.SessionRecord(
+                    name="frontend-agent",
+                    tmux_session="ccm-frontend-agent",
+                    display_name="frontend-agent",
                     cwd="/work/app",
                     started_at=0.0,
                 )
             }
         )
 
-        events = ccm.read_updates(state, "frontend-helper", wait_seconds=0, poll_interval=1, raw=True)
+        events = ccm.read_updates(state, "frontend-agent", wait_seconds=0, poll_interval=1, raw=True)
 
         self.assertEqual(events, [raw_event])
 
@@ -1746,10 +1746,10 @@ class DoctorTests(unittest.TestCase):
         claude_version_from_binary.return_value = "Claude Code v2.1.86"
         state = ccm.State(
             sessions={
-                "frontend-helper": ccm.SessionRecord(
-                    name="frontend-helper",
-                    tmux_session="ccm-frontend-helper",
-                    display_name="frontend-helper",
+                "frontend-agent": ccm.SessionRecord(
+                    name="frontend-agent",
+                    tmux_session="ccm-frontend-agent",
+                    display_name="frontend-agent",
                     cwd="/work/app",
                     started_at=0.0,
                 )
@@ -1778,19 +1778,19 @@ class InspectTests(unittest.TestCase):
         tmux_has_session.return_value = True
         tmux_capture.return_value = "line 1\nline 2\n❯ \n"
         record = ccm.SessionRecord(
-            name="frontend-helper",
-            tmux_session="ccm-frontend-helper",
-            display_name="frontend-helper",
+            name="frontend-agent",
+            tmux_session="ccm-frontend-agent",
+            display_name="frontend-agent",
             cwd="/work/app",
             started_at=123.0,
         )
-        state = ccm.State(sessions={"frontend-helper": record})
+        state = ccm.State(sessions={"frontend-agent": record})
 
-        payload = ccm.inspect_session(state, "frontend-helper", Path("/tmp/state.json"))
+        payload = ccm.inspect_session(state, "frontend-agent", Path("/tmp/state.json"))
 
-        self.assertEqual(payload["name"], "frontend-helper")
+        self.assertEqual(payload["name"], "frontend-agent")
         self.assertEqual(payload["state_path"], "/tmp/state.json")
-        self.assertEqual(payload["tmux_session"], "ccm-frontend-helper")
+        self.assertEqual(payload["tmux_session"], "ccm-frontend-agent")
         self.assertEqual(payload["status"], "running")
         self.assertEqual(payload["transcript_path"], "/tmp/transcript.jsonl")
         self.assertIn("❯", payload["pane_tail"])
@@ -1870,7 +1870,7 @@ class KittyMessagingTests(unittest.TestCase):
                                 ],
                             },
                             {
-                                "title": "Claude Helper",
+                                "title": "Claude Agent",
                                 "windows": [
                                     {"id": 20, "is_active": False, "cwd": "/old", "env": {"PWD": "/old"}, "cmdline": ["zsh"]},
                                     {
@@ -1892,19 +1892,19 @@ class KittyMessagingTests(unittest.TestCase):
                 "worktree": "/work/main",
                 "repo_root": "/work",
                 "branch": "main",
-                "helper": "",
-                "helper_status": "",
-                "helper_tmux_session": "",
-                "helper_transcript": "",
+                "agent": "",
+                "agent_status": "",
+                "agent_tmux_session": "",
+                "agent_transcript": "",
             },
             {
                 "worktree": "/work/ui",
                 "repo_root": "/work",
                 "branch": "feat/ui",
-                "helper": "frontend-helper",
-                "helper_status": "running",
-                "helper_tmux_session": "ccm-frontend-helper-1234",
-                "helper_transcript": "/tmp/demo.jsonl",
+                "agent": "frontend-agent",
+                "agent_status": "running",
+                "agent_tmux_session": "ccm-frontend-agent-1234",
+                "agent_transcript": "/tmp/demo.jsonl",
             },
         ]
 
@@ -1920,22 +1920,22 @@ class KittyMessagingTests(unittest.TestCase):
                     "cmdline": "codex",
                     "branch": "main",
                     "repo_root": "/work",
-                    "helper": "",
-                    "helper_status": "",
-                    "helper_tmux_session": "",
-                    "helper_transcript": "",
+                    "agent": "",
+                    "agent_status": "",
+                    "agent_tmux_session": "",
+                    "agent_transcript": "",
                 },
                 {
-                    "title": "Claude Helper",
+                    "title": "Claude Agent",
                     "window_id": "21",
                     "cwd": "/work/ui",
                     "cmdline": "claude",
                     "branch": "feat/ui",
                     "repo_root": "/work",
-                    "helper": "frontend-helper",
-                    "helper_status": "running",
-                    "helper_tmux_session": "ccm-frontend-helper-1234",
-                    "helper_transcript": "/tmp/demo.jsonl",
+                    "agent": "frontend-agent",
+                    "agent_status": "running",
+                    "agent_tmux_session": "ccm-frontend-agent-1234",
+                    "agent_transcript": "/tmp/demo.jsonl",
                 },
             ],
         )
@@ -1973,10 +1973,10 @@ class KittyMessagingTests(unittest.TestCase):
             "worktree": "/work/tasks",
             "repo_root": "/work",
             "branch": "scheduled-tasks",
-            "helper": "",
-            "helper_status": "",
-            "helper_tmux_session": "",
-            "helper_transcript": "",
+            "agent": "",
+            "agent_status": "",
+            "agent_tmux_session": "",
+            "agent_transcript": "",
         }
 
         payload = ccm.send_message_to_kitty_tab(

@@ -4,9 +4,9 @@
 
 **Goal:** Replace the leon-bound phone WeChat path with a real independent WeChat transport owned by `ccm`.
 
-**Architecture:** Add one global transport state file plus a small set of direct iLink protocol helpers inside `claude_coop_manager.py`. Reuse the existing peer registry only as a delivery target, not as a transport dependency.
+**Architecture:** Add one global transport state file plus a small set of direct iLink protocol agents inside `claude_coop_manager.py`. Reuse the existing peer registry only as a delivery target, not as a transport dependency.
 
-**Tech Stack:** Python standard library, Swift/CoreImage for QR rendering, existing `kitty` messaging helpers
+**Tech Stack:** Python standard library, Swift/CoreImage for QR rendering, existing `kitty` messaging agents
 
 ---
 
@@ -18,7 +18,7 @@
 
 - [ ] Write failing tests for direct connect/state behavior and remove leon-login assumptions
 - [ ] Run `python3 -m unittest tests/test_cli.py -v`
-- [ ] Implement minimal direct transport state and direct QR/status helpers
+- [ ] Implement minimal direct transport state and direct QR/status agents
 - [ ] Run `python3 -m unittest tests/test_cli.py -v`
 
 ### Task 2: Bind incoming phone WeChat messages to a direct target
@@ -29,7 +29,7 @@
 
 - [ ] Write failing tests for `wechat-bind`, `wechat-unbind`, and inbound delivery formatting
 - [ ] Run targeted tests
-- [ ] Implement the minimal bind/unbind and delivery helpers
+- [ ] Implement the minimal bind/unbind and delivery agents
 - [ ] Run targeted tests again
 
 ### Task 3: Add phone-user reply and polling commands

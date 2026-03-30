@@ -15,7 +15,7 @@ class SmokeCheckTests(unittest.TestCase):
         with mock.patch("sys.argv", ["ccm-smoke"]):
             args = smoke.parse_args()
 
-        self.assertEqual(args.helper_name, smoke.DEFAULT_HELPER_NAME)
+        self.assertEqual(args.agent_name, smoke.DEFAULT_AGENT_NAME)
 
     @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
     def test_run_smoke_happy_path_reads_probe_token_and_returns_summary(self, run_cli):
@@ -23,17 +23,17 @@ class SmokeCheckTests(unittest.TestCase):
         run_cli.side_effect = [
             completed(stdout=json.dumps({"ok": True})),
             completed(stdout="not-running\n", returncode=1),
-            completed(stdout=json.dumps({"name": "smoke-helper", "status": "running"})),
-            completed(stdout=json.dumps([{"name": "smoke-helper", "status": "running"}])),
-            completed(stdout=json.dumps({"name": "smoke-helper", "transcript": "/tmp/demo.jsonl"})),
+            completed(stdout=json.dumps({"name": "smoke-agent", "status": "running"})),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "running"}])),
+            completed(stdout=json.dumps({"name": "smoke-agent", "transcript": "/tmp/demo.jsonl"})),
             completed(stdout=json.dumps([{"kind": "assistant", "text": token}])),
-            completed(stdout=json.dumps([{"name": "smoke-helper", "status": "killed"}])),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "killed"}])),
             completed(stdout=json.dumps({"removed_dead": [], "killed_live": []})),
         ]
 
         payload = smoke.run_smoke(
             cwd="/work/demo",
-            helper_name="smoke-helper",
+            agent_name="smoke-agent",
             read_wait_seconds=12.0,
             probe_token=token,
         )
@@ -44,11 +44,11 @@ class SmokeCheckTests(unittest.TestCase):
         self.assertEqual(payload["events"][0]["text"], token)
         self.assertEqual(run_cli.call_args_list[0].args[0], ["ccm", "--json", "--cwd", "/work/demo", "doctor"])
         self.assertEqual(run_cli.call_args_list[1].args[0], ["codex-heartbeat", "status"])
-        self.assertEqual(run_cli.call_args_list[2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "start", "smoke-helper"])
-        self.assertEqual(run_cli.call_args_list[5].args[0][:6], ["ccm", "--json", "--cwd", "/work/demo", "read", "smoke-helper"])
+        self.assertEqual(run_cli.call_args_list[2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "start", "smoke-agent"])
+        self.assertEqual(run_cli.call_args_list[5].args[0][:6], ["ccm", "--json", "--cwd", "/work/demo", "read", "smoke-agent"])
         self.assertIn("--wait-seconds", run_cli.call_args_list[5].args[0])
         self.assertIn("--raw", run_cli.call_args_list[5].args[0])
-        self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-helper"])
+        self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-agent"])
         self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
 
     @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
@@ -56,23 +56,23 @@ class SmokeCheckTests(unittest.TestCase):
         run_cli.side_effect = [
             completed(stdout=json.dumps({"ok": True})),
             completed(stdout=json.dumps({"running": True})),
-            completed(stdout=json.dumps({"name": "smoke-helper", "status": "running"})),
-            completed(stdout=json.dumps([{"name": "smoke-helper", "status": "running"}])),
-            completed(stdout=json.dumps({"name": "smoke-helper", "transcript": "/tmp/demo.jsonl"})),
+            completed(stdout=json.dumps({"name": "smoke-agent", "status": "running"})),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "running"}])),
+            completed(stdout=json.dumps({"name": "smoke-agent", "transcript": "/tmp/demo.jsonl"})),
             completed(stdout=json.dumps([{"kind": "assistant", "text": "wrong"}])),
-            completed(stdout=json.dumps([{"name": "smoke-helper", "status": "killed"}])),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "killed"}])),
             completed(stdout=json.dumps({"removed_dead": [], "killed_live": []})),
         ]
 
         with self.assertRaisesRegex(RuntimeError, "probe token"):
             smoke.run_smoke(
                 cwd="/work/demo",
-                helper_name="smoke-helper",
+                agent_name="smoke-agent",
                 read_wait_seconds=12.0,
                 probe_token="EXPECTED_TOKEN",
             )
 
-        self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-helper"])
+        self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-agent"])
         self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
 
     @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
@@ -80,9 +80,9 @@ class SmokeCheckTests(unittest.TestCase):
         run_cli.side_effect = [
             completed(stdout=json.dumps({"ok": True})),
             completed(stdout=json.dumps({"running": True})),
-            completed(stdout=json.dumps({"name": "smoke-helper", "status": "running"})),
-            completed(stdout=json.dumps([{"name": "smoke-helper", "status": "running"}])),
-            completed(stdout=json.dumps({"name": "smoke-helper", "transcript": "/tmp/demo.jsonl"})),
+            completed(stdout=json.dumps({"name": "smoke-agent", "status": "running"})),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "running"}])),
+            completed(stdout=json.dumps({"name": "smoke-agent", "transcript": "/tmp/demo.jsonl"})),
             completed(
                 stdout=json.dumps(
                     [
@@ -94,19 +94,19 @@ class SmokeCheckTests(unittest.TestCase):
                     ]
                 )
             ),
-            completed(stdout=json.dumps([{"name": "smoke-helper", "status": "killed"}])),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "killed"}])),
             completed(stdout=json.dumps({"removed_dead": [], "killed_live": []})),
         ]
 
         with self.assertRaisesRegex(RuntimeError, "usage limit"):
             smoke.run_smoke(
                 cwd="/work/demo",
-                helper_name="smoke-helper",
+                agent_name="smoke-agent",
                 read_wait_seconds=12.0,
                 probe_token="EXPECTED_TOKEN",
             )
 
-        self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-helper"])
+        self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-agent"])
         self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
 
     @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
