@@ -2,9 +2,9 @@
 
 [English](./README.md)
 
-`ccm-orchestra` 是一个控制层，用来在 `tmux` 里运行持续的交互式 Claude Code helper，并在需要时通过 `kitty` 做可见协作。
+`ccm-orchestra` 是一个控制层，用来在 `tmux` 里运行持续的交互式 Claude Code helper，并通过 `kitty` 做可见协作。
 
-核心 loop 很简单：在 detached tmux pane 里启动 helper，给它发 prompt，再从 transcript 里读新输出。Session 按工作目录隔离，所以不同仓库里可以复用同一个 helper 名；`kitty` 能力只在你真的需要可见协作或 live 检查时再叠上去。
+核心 loop 很简单：在 detached tmux pane 里启动 helper，给它发 prompt，再从 transcript 里读新输出。Session 按工作目录隔离，所以不同仓库里可以复用同一个 helper 名。`tmux` 层和 `kitty` 层合在一起，才让 Claude Code 和 Codex 能并行协作、互相交接、并在需要时保持可观察。
 
 ## 两层结构
 
@@ -15,8 +15,9 @@
 
 如果只记一件事，就记这个：
 
-- 日常工作发生在 `tmux` 层：`start -> send -> read`
-- `kitty` 不是必需层，主要用于观察和可见协作
+- `tmux` 和 `kitty` 是两个并列能力，可以单独用，也可以联动用
+- 默认 helper loop 在 `tmux` 层：`start -> send -> read`
+- `kitty` 层负责可见协作、relay 和人工观察
 
 这两层的唤醒模型也不一样：
 

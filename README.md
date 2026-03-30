@@ -2,9 +2,9 @@
 
 [中文说明](./README.zh-CN.md)
 
-`ccm-orchestra` is a control plane for running persistent, interactive Claude Code helpers in `tmux`, with optional visible coordination through `kitty`.
+`ccm-orchestra` is a control plane for running persistent, interactive Claude Code helpers in `tmux` and coordinating visible collaboration through `kitty`.
 
-The core loop is simple: start a helper in a detached tmux pane, send it prompts, and read its transcript. Sessions are isolated by working directory, so the same helper name can coexist across repos. `kitty` features are layered on top only when you need visible collaboration or live inspection.
+The core loop is simple: start a helper in a detached tmux pane, send it prompts, and read its transcript. Sessions are isolated by working directory, so the same helper name can coexist across repos. Together, the `tmux` layer and the `kitty` layer let Claude Code and Codex work in parallel, hand work back and forth, and stay observable when needed.
 
 ## The Two Layers
 
@@ -15,8 +15,9 @@ This system has two clearly different layers:
 
 If you remember only one thing, remember this:
 
-- everyday work happens in the `tmux` layer: `start -> send -> read`
-- `kitty` is optional, mostly for observation and visible coordination
+- `tmux` and `kitty` are two distinct capabilities, and they can work independently or together
+- the default helper loop is in the `tmux` layer: `start -> send -> read`
+- the `kitty` layer makes visible coordination, relay, and human observation possible
 
 The wakeup model is different across the two layers:
 
