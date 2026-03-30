@@ -1,8 +1,8 @@
+> **Promotion:** This project is promoted through [linux.do](https://linux.do/).
+
 # CCM Orchestra
 
 [中文说明](./README.zh-CN.md)
-
-This project is promoted through [linux.do](https://linux.do/).
 
 `ccm-orchestra` is a control plane for running persistent, interactive Claude Code helpers in `tmux` and coordinating visible collaboration through `kitty`. Together they form a paired operating model: `tmux` keeps the helper alive and reusable, `kitty` makes the collaboration visible and relay-capable.
 

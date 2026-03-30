@@ -1,8 +1,8 @@
+> **推广说明：** 本项目通过 [linux.do](https://linux.do/) 进行推广。
+
 # CCM Orchestra
 
 [English](./README.md)
-
-本项目通过 [linux.do](https://linux.do/) 进行推广。
 
 `ccm-orchestra` 是一个控制层，用来在 `tmux` 里运行持续的交互式 Claude Code helper，并通过 `kitty` 做可见协作。两者构成一个配对操作模型：`tmux` 让 helper 持续存活、可复用，`kitty` 让协作过程可见并支持 relay。
 
