@@ -37,6 +37,14 @@ ccm wechat-send scheduled-tasks "Please summarize your current frontend directio
 ccm wechat-shift scheduled-tasks "Take over the next frontend simplify pass." --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
+For a headless Claude/tmux helper, register inside the helper session itself:
+
+```bash
+ccm wechat-register claude-handoff --runtime claude --tmux-session ccm-frontend-helper-abcd1234 --cwd "$PWD"
+```
+
+`ccm wechat-shift <alias> "..."` is the real handoff primitive. If you currently own the phone thread, shift also rebinds phone ownership to the target alias.
+
 ## Phone WeChat Layer
 
 ```bash

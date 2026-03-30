@@ -181,6 +181,14 @@ ccm wechat-shift scheduled-tasks "Take ownership of the next frontend simplify p
 
 `wechat-send` 和 `wechat-shift` 会自动包上一层 system-style reminder，并明确写出怎么回，例如 `ccm wechat-send mycel "..."`。每个 tab 都应该注册一个具体 alias，并避免撞名。
 
+如果是 headless 的 Claude/tmux helper，就直接在 helper 所在的 tmux 会话里注册，不要为了 WeChat 临时再开一个可见 kitty tab：
+
+```bash
+ccm wechat-register claude-handoff --runtime claude --tmux-session ccm-frontend-helper-abcd1234 --cwd "$PWD"
+```
+
+`wechat-shift` 才是真正的转交原语。如果当前 sender 本来就是手机线程 owner，那么 `ccm wechat-shift <alias> "..."` 会同时把 phone ownership 也切到目标 alias。
+
 ### 手机微信接入是另一条路径
 
 如果用户说“把微信接到你这里，让我能用手机联系你”，不要把这件事和上面的 peer 层混为一谈。
@@ -203,6 +211,7 @@ ccm wechat-watch-status
 - `wechat-bind` 决定手机侧新消息默认送到哪个已注册 alias。
 - `wechat-watch --detach` 用 `ccm` 自己托管后台 watcher。不要再依赖临时 shell 后台脚本去跑长期手机消息投递。
 - `wechat-watch-status` 用来看这个 watcher 现在是否还活着。
+- 手机链路连好之后，只要当前 sender 正持有这个 phone thread，`wechat-shift` 就能把 peer 对话和 phone ownership 一起转给目标 alias。
 
 等这条手机侧路径准备好之后，`ccm` 里的 wechat 风格 peer 层仍然可以继续负责 tab 之间的协作和转交。
 

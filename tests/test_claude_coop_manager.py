@@ -403,6 +403,38 @@ class WeChatPeerTests(unittest.TestCase):
         self.assertEqual(record.tmux_session, "dev-shell")
         self.assertEqual(registry.peers["scheduled-ui"].branch, "feat/demo")
 
+    def test_register_wechat_peer_allows_headless_tmux_peer(self):
+        registry = ccm.WeChatRegistry()
+        current = {
+            "title": "",
+            "worktree": "/work/ccm",
+            "repo_root": "/work/ccm",
+            "branch": "main",
+            "helper": "frontend-helper",
+            "helper_status": "running",
+            "helper_tmux_session": "",
+            "helper_transcript": "/tmp/helper.jsonl",
+            "window_id": "",
+            "cmdline": "",
+        }
+
+        with mock.patch("claude_coop_manager.resolve_current_sender_context", return_value=current), \
+             mock.patch("claude_coop_manager.current_tmux_session_name", return_value="ccm-frontend-helper-abcd1234"):
+            record = ccm.register_wechat_peer(
+                registry,
+                alias="claude-handoff",
+                cwd="/work/ccm",
+                listen_on="unix:/tmp/mykitty",
+                runtime="claude",
+                tmux_session="ccm-frontend-helper-abcd1234",
+            )
+
+        self.assertEqual(record.alias, "claude-handoff")
+        self.assertEqual(record.title, "claude-handoff")
+        self.assertEqual(record.window_id, "")
+        self.assertEqual(record.tmux_session, "ccm-frontend-helper-abcd1234")
+        self.assertEqual(record.runtime, "claude")
+
     def test_format_wechat_prompt_includes_reply_and_shift_instructions(self):
         sender = ccm.WeChatPeerRecord(
             alias="mycel",
@@ -432,6 +464,34 @@ class WeChatPeerTests(unittest.TestCase):
         self.assertIn("To reply, use ccm wechat-send mycel", rendered)
         self.assertIn("To hand off, use ccm wechat-shift", rendered)
         self.assertIn("<mode>shift</mode>", rendered)
+
+    def test_format_wechat_prompt_can_compact_for_claude_targets(self):
+        sender = ccm.WeChatPeerRecord(
+            alias="mycel",
+            title="mycel",
+            window_id="536",
+            worktree="/work/app",
+            repo_root="/work",
+            branch="feat/demo",
+            tmux_session="codex-main",
+            helper="frontend-helper",
+            helper_status="running",
+            helper_transcript="/tmp/demo.jsonl",
+            runtime="codex",
+            registered_at=0.0,
+        )
+
+        rendered = ccm.format_wechat_prompt(
+            "Please take over the frontend pass.",
+            sender,
+            mode="shift",
+            task="frontend pass",
+            scene="untouched",
+            compact=True,
+        )
+
+        self.assertIn("<system-reminder>", rendered)
+        self.assertNotIn("\n", rendered)
 
     @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
     @mock.patch("claude_coop_manager.resolve_sender_alias", autospec=True)
@@ -492,6 +552,133 @@ class WeChatPeerTests(unittest.TestCase):
         sent_message = send_message_to_kitty_window.call_args.args[1]
         self.assertIn("ccm wechat-send mycel", sent_message)
 
+    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
+    @mock.patch("claude_coop_manager.tmux_send_enter", autospec=True)
+    @mock.patch("claude_coop_manager.ensure_tmux_session_ready", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_sender_alias", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    def test_wechat_shift_compacts_multiline_envelope_for_claude_targets(
+        self,
+        resolve_registered_peer_target,
+        resolve_sender_alias,
+        ensure_tmux_session_ready,
+        tmux_send_enter,
+        send_message_to_kitty_window,
+    ):
+        registry = ccm.WeChatRegistry(
+            peers={
+                "claude-handoff": ccm.WeChatPeerRecord(
+                    alias="claude-handoff",
+                    title="[ccm:frontend-helper]",
+                    window_id="562",
+                    worktree="/work/ccm",
+                    repo_root="/work/ccm",
+                    branch="main",
+                    tmux_session="ccm-frontend-helper-abcd1234",
+                    helper="frontend-helper",
+                    helper_status="running",
+                    helper_transcript="/tmp/helper.jsonl",
+                    runtime="claude",
+                    registered_at=0.0,
+                ),
+                "mycel": ccm.WeChatPeerRecord(
+                    alias="mycel",
+                    title="mycel",
+                    window_id="536",
+                    worktree="/work/main",
+                    repo_root="/work/main",
+                    branch="main",
+                    tmux_session="",
+                    helper="",
+                    helper_status="",
+                    helper_transcript="",
+                    runtime="codex",
+                    registered_at=0.0,
+                ),
+            }
+        )
+        resolve_sender_alias.return_value = "mycel"
+        resolve_registered_peer_target.return_value = registry.peers["claude-handoff"]
+        send_message_to_kitty_window.return_value = {"title": "[ccm:frontend-helper]", "window_id": "562", "endpoint": "unix:/tmp/mykitty"}
+
+        ccm.wechat_send_to_peer(
+            registry,
+            alias="claude-handoff",
+            message="Take over the phone thread.",
+            listen_on="unix:/tmp/mykitty",
+            cwd="/work/main",
+            mode="shift",
+        )
+
+        sent_message = send_message_to_kitty_window.call_args.args[1]
+        self.assertNotIn("\n", sent_message)
+        self.assertIn("<system-reminder>", sent_message)
+        ensure_tmux_session_ready.assert_called_once_with("ccm-frontend-helper-abcd1234")
+        tmux_send_enter.assert_called_once_with("ccm-frontend-helper-abcd1234")
+
+    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_sender_alias", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    def test_wechat_shift_rebinds_phone_owner_when_sender_currently_owns_thread(
+        self,
+        resolve_registered_peer_target,
+        resolve_sender_alias,
+        send_message_to_kitty_window,
+    ):
+        registry = ccm.WeChatRegistry(
+            peers={
+                "claude-handoff": ccm.WeChatPeerRecord(
+                    alias="claude-handoff",
+                    title="claude-handoff",
+                    window_id="",
+                    worktree="/work/ccm",
+                    repo_root="/work/ccm",
+                    branch="main",
+                    tmux_session="ccm-frontend-helper-abcd1234",
+                    helper="frontend-helper",
+                    helper_status="running",
+                    helper_transcript="/tmp/helper.jsonl",
+                    runtime="claude",
+                    registered_at=0.0,
+                ),
+                "mycel": ccm.WeChatPeerRecord(
+                    alias="mycel",
+                    title="mycel",
+                    window_id="536",
+                    worktree="/work/main",
+                    repo_root="/work/main",
+                    branch="main",
+                    tmux_session="",
+                    helper="",
+                    helper_status="",
+                    helper_transcript="",
+                    runtime="codex",
+                    registered_at=0.0,
+                ),
+            }
+        )
+        transport = ccm.WeChatTransportState(token="bot-token", bound_alias="mycel")
+        resolve_sender_alias.return_value = "mycel"
+        resolve_registered_peer_target.return_value = registry.peers["claude-handoff"]
+        send_message_to_kitty_window.return_value = {"window_id": "536", "endpoint": "unix:/tmp/mykitty"}
+
+        with mock.patch("claude_coop_manager.ensure_tmux_session_ready", autospec=True), \
+             mock.patch("claude_coop_manager.tmux_paste", autospec=True), \
+             mock.patch("claude_coop_manager.tmux_send_enter", autospec=True):
+            payload = ccm.wechat_send_to_peer(
+                registry,
+                alias="claude-handoff",
+                message="Take over the phone thread.",
+                listen_on="unix:/tmp/mykitty",
+                cwd="/work/main",
+                mode="shift",
+                transport=transport,
+            )
+
+        self.assertEqual(transport.bound_alias, "claude-handoff")
+        self.assertEqual(payload["phone_handoff"], "true")
+        self.assertEqual(payload["phone_bound_alias"], "claude-handoff")
+
     def test_unregister_wechat_peer_removes_alias(self):
         registry = ccm.WeChatRegistry(
             peers={
@@ -516,6 +703,95 @@ class WeChatPeerTests(unittest.TestCase):
 
         self.assertEqual(removed.alias, "scheduled-ui")
         self.assertEqual(registry.peers, {})
+
+    def test_resolve_sender_alias_can_use_tmux_session_without_visible_tab(self):
+        registry = ccm.WeChatRegistry(
+            peers={
+                "claude-handoff": ccm.WeChatPeerRecord(
+                    alias="claude-handoff",
+                    title="claude-handoff",
+                    window_id="",
+                    worktree="/work/ccm",
+                    repo_root="/work/ccm",
+                    branch="main",
+                    tmux_session="ccm-frontend-helper-abcd1234",
+                    helper="frontend-helper",
+                    helper_status="running",
+                    helper_transcript="/tmp/helper.jsonl",
+                    runtime="claude",
+                    registered_at=0.0,
+                )
+            }
+        )
+        current = {"title": "main", "worktree": "/work/ccm", "window_id": ""}
+
+        with mock.patch("claude_coop_manager.resolve_current_sender_context", return_value=current), \
+             mock.patch("claude_coop_manager.current_tmux_session_name", return_value="ccm-frontend-helper-abcd1234"):
+            alias = ccm.resolve_sender_alias(registry, cwd="/work/ccm", listen_on="unix:/tmp/mykitty")
+
+        self.assertEqual(alias, "claude-handoff")
+
+    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True, return_value=True)
+    @mock.patch("claude_coop_manager.list_kitty_tabs", autospec=True)
+    def test_resolve_registered_peer_target_allows_headless_tmux_peer(self, list_kitty_tabs, tmux_has_session):
+        registry = ccm.WeChatRegistry(
+            peers={
+                "claude-handoff": ccm.WeChatPeerRecord(
+                    alias="claude-handoff",
+                    title="claude-handoff",
+                    window_id="",
+                    worktree="/work/ccm",
+                    repo_root="/work/ccm",
+                    branch="main",
+                    tmux_session="ccm-frontend-helper-abcd1234",
+                    helper="frontend-helper",
+                    helper_status="running",
+                    helper_transcript="/tmp/helper.jsonl",
+                    runtime="claude",
+                    registered_at=0.0,
+                )
+            }
+        )
+
+        target = ccm.resolve_registered_peer_target(registry, alias="claude-handoff", listen_on="unix:/tmp/mykitty")
+
+        self.assertEqual(target.alias, "claude-handoff")
+        self.assertEqual(target.tmux_session, "ccm-frontend-helper-abcd1234")
+        list_kitty_tabs.assert_not_called()
+
+    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
+    @mock.patch("claude_coop_manager.tmux_send_enter", autospec=True)
+    @mock.patch("claude_coop_manager.tmux_paste", autospec=True)
+    @mock.patch("claude_coop_manager.ensure_tmux_session_ready", autospec=True)
+    def test_deliver_message_to_peer_can_use_headless_tmux_without_kitty(
+        self,
+        ensure_tmux_session_ready,
+        tmux_paste,
+        tmux_send_enter,
+        send_message_to_kitty_window,
+    ):
+        target = ccm.WeChatPeerRecord(
+            alias="claude-handoff",
+            title="claude-handoff",
+            window_id="",
+            worktree="/work/ccm",
+            repo_root="/work/ccm",
+            branch="main",
+            tmux_session="ccm-frontend-helper-abcd1234",
+            helper="frontend-helper",
+            helper_status="running",
+            helper_transcript="/tmp/helper.jsonl",
+            runtime="claude",
+            registered_at=0.0,
+        )
+
+        payload = ccm.deliver_message_to_peer(target, "HEADLESS_DELIVERY_TEST", listen_on="unix:/tmp/mykitty")
+
+        ensure_tmux_session_ready.assert_called_once_with("ccm-frontend-helper-abcd1234")
+        tmux_paste.assert_called_once_with("ccm-frontend-helper-abcd1234", "HEADLESS_DELIVERY_TEST")
+        tmux_send_enter.assert_called_once_with("ccm-frontend-helper-abcd1234")
+        send_message_to_kitty_window.assert_not_called()
+        self.assertEqual(payload["tmux_session"], "ccm-frontend-helper-abcd1234")
 
     def test_render_wechat_guide_for_agent_covers_phone_onboarding(self):
         guide_text = ccm.render_wechat_guide("agent")
@@ -710,6 +986,17 @@ class WeChatPhoneTests(unittest.TestCase):
 
         self.assertIn("replaced", str(ctx.exception))
 
+    def test_wechat_watch_guard_refreshes_bound_alias_from_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "transport.json"
+            current = ccm.WeChatTransportState(token="same-token", account_id="bot-1", bound_alias="mycel")
+            persisted = ccm.WeChatTransportState(token="same-token", account_id="bot-1", bound_alias="claude-handoff")
+            ccm.save_wechat_transport_state(persisted, path)
+
+            ccm.guard_wechat_transport_state(current, path)
+
+        self.assertEqual(current.bound_alias, "claude-handoff")
+
     def test_wechat_status_payload_reports_connection_and_binding(self):
         state = ccm.WeChatTransportState(
             token="bot-token",
@@ -751,12 +1038,12 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(updated.bound_alias, "mycel")
 
     @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
-    @mock.patch("claude_coop_manager.send_message_to_kitty_window", autospec=True)
+    @mock.patch("claude_coop_manager.deliver_message_to_peer", autospec=True)
     @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
     def test_wechat_poll_once_delivers_messages_to_bound_peer(
         self,
         resolve_registered_peer_target,
-        send_message_to_kitty_window,
+        deliver_message_to_peer,
         wechat_http_json,
     ):
         state = ccm.WeChatTransportState(
@@ -784,7 +1071,7 @@ class WeChatPhoneTests(unittest.TestCase):
             }
         )
         resolve_registered_peer_target.return_value = registry.peers["scheduled-tasks"]
-        send_message_to_kitty_window.return_value = {"window_id": "498", "title": "scheduled-tasks"}
+        deliver_message_to_peer.return_value = {"window_id": "498", "title": "scheduled-tasks"}
         wechat_http_json.return_value = {
             "ret": 0,
             "errcode": 0,
@@ -810,9 +1097,72 @@ class WeChatPhoneTests(unittest.TestCase):
         self.assertEqual(payload["delivered_count"], 1)
         self.assertEqual(state.sync_buf, "cursor-1")
         self.assertEqual(state.context_tokens["alice@im.wechat"], "ctx-1")
-        sent_message = send_message_to_kitty_window.call_args.args[1]
+        sent_message = deliver_message_to_peer.call_args.args[1]
         self.assertIn("hello from phone", sent_message)
         self.assertIn("ccm wechat-reply alice@im.wechat", sent_message)
+
+    @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
+    @mock.patch("claude_coop_manager.deliver_message_to_peer", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_registered_peer_target", autospec=True)
+    def test_wechat_poll_once_can_deliver_to_headless_claude_peer(
+        self,
+        resolve_registered_peer_target,
+        deliver_message_to_peer,
+        wechat_http_json,
+    ):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            account_id="bot-1",
+            user_id="user-1",
+            bound_alias="claude-handoff",
+        )
+        registry = ccm.WeChatRegistry(
+            peers={
+                "claude-handoff": ccm.WeChatPeerRecord(
+                    alias="claude-handoff",
+                    title="claude-handoff",
+                    window_id="",
+                    worktree="/work/ccm",
+                    repo_root="/work/ccm",
+                    branch="main",
+                    tmux_session="ccm-frontend-helper-abcd1234",
+                    helper="frontend-helper",
+                    helper_status="running",
+                    helper_transcript="/tmp/helper.jsonl",
+                    runtime="claude",
+                    registered_at=0.0,
+                )
+            }
+        )
+        resolve_registered_peer_target.return_value = registry.peers["claude-handoff"]
+        deliver_message_to_peer.return_value = {"window_id": "", "tmux_session": "ccm-frontend-helper-abcd1234"}
+        wechat_http_json.return_value = {
+            "ret": 0,
+            "errcode": 0,
+            "get_updates_buf": "cursor-2",
+            "msgs": [
+                {
+                    "message_type": 1,
+                    "from_user_id": "alice@im.wechat",
+                    "context_token": "ctx-2",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "headless phone hello"}},
+                    ],
+                }
+            ],
+        }
+
+        payload = ccm.wechat_poll_once(
+            state,
+            registry=registry,
+            listen_on="unix:/tmp/mykitty",
+        )
+
+        self.assertEqual(payload["delivered_count"], 1)
+        self.assertEqual(state.sync_buf, "cursor-2")
+        self.assertEqual(deliver_message_to_peer.call_args.args[0].alias, "claude-handoff")
+        sent_message = deliver_message_to_peer.call_args.args[1]
+        self.assertIn("headless phone hello", sent_message)
 
     @mock.patch("claude_coop_manager.wechat_http_json", autospec=True)
     def test_wechat_reply_uses_saved_context_token(self, wechat_http_json):
@@ -860,6 +1210,39 @@ class WeChatPhoneTests(unittest.TestCase):
 
 
 class CommandBuildTests(unittest.TestCase):
+    @mock.patch("claude_coop_manager.current_cac_claude_details", autospec=True)
+    @mock.patch("claude_coop_manager.Path.exists", autospec=True)
+    @mock.patch("claude_coop_manager.shutil.which", autospec=True)
+    def test_resolve_claude_executable_prefers_cac_wrapper_over_path(
+        self,
+        which,
+        path_exists,
+        current_cac_claude_details,
+    ):
+        which.return_value = "/opt/homebrew/bin/claude"
+        path_exists.return_value = True
+        current_cac_claude_details.return_value = {
+            "actual_path": "/Users/test/.cac/versions/2.1.86/claude",
+            "config_dir": "/Users/test/.cac/envs/main/.claude",
+        }
+
+        resolved = ccm.resolve_claude_executable()
+
+        self.assertEqual(resolved, str(Path.home() / ".cac" / "bin" / "claude"))
+        which.assert_not_called()
+
+    @mock.patch.dict("os.environ", {}, clear=True)
+    @mock.patch("claude_coop_manager.current_cac_claude_details", autospec=True)
+    def test_launch_environment_defaults_config_root_from_cac(self, current_cac_claude_details):
+        current_cac_claude_details.return_value = {
+            "actual_path": "/Users/test/.cac/versions/2.1.86/claude",
+            "config_dir": "/Users/test/.cac/envs/main/.claude",
+        }
+
+        env = ccm.launch_environment()
+
+        self.assertEqual(env["CLAUDE_CONFIG_DIR"], "/Users/test/.cac/envs/main/.claude")
+
     @mock.patch("claude_coop_manager.resolve_claude_executable", autospec=True)
     def test_build_claude_command_uses_interactive_mode(self, resolve_claude_executable):
         resolve_claude_executable.return_value = "/Users/test/.cac/bin/claude"
