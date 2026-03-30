@@ -116,6 +116,14 @@ ccm-smoke --cwd "$PWD"
 
 `ccm-smoke` runs a narrow live check: `doctor -> start -> list -> send -> read -> kill -> cleanup`, and also records the current `codex-heartbeat status`. It fails loudly if the helper path does not produce the probe token.
 
+If `read` comes back empty or transcript resolution still looks suspicious, inspect the live session instead of guessing:
+
+```bash
+ccm inspect frontend-helper --cwd "$PWD"
+```
+
+That prints the state path, tmux session, resolved transcript path, transcript search roots, and a recent pane tail.
+
 ### Keep a long-lived Claude partner
 
 - Each visible Codex tab should usually keep one dedicated, trusted Claude helper in tmux and reuse it over time. Do not kill the helper after every small task. The persistent session is the point.

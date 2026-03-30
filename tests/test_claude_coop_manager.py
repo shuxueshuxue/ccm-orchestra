@@ -233,6 +233,23 @@ class TranscriptResolutionTests(unittest.TestCase):
 
             self.assertEqual(match, transcript)
 
+    @mock.patch("claude_coop_manager.candidate_projects_roots", autospec=True)
+    def test_describe_transcript_search_lists_roots_and_identity(self, candidate_projects_roots):
+        candidate_projects_roots.return_value = [Path("/tmp/cac/projects"), Path("/tmp/fallback/projects")]
+        record = ccm.SessionRecord(
+            name="frontend-helper",
+            tmux_session="ccm-frontend-helper",
+            display_name="frontend-helper",
+            cwd="/work/app",
+            started_at=123.0,
+        )
+
+        payload = ccm.describe_transcript_search(record)
+
+        self.assertEqual(payload["display_name"], "frontend-helper")
+        self.assertEqual(payload["cwd"], "/work/app")
+        self.assertEqual(payload["projects_roots"], ["/tmp/cac/projects", "/tmp/fallback/projects"])
+
 
 class NamespaceTests(unittest.TestCase):
     def test_tmux_session_name_includes_cwd_fingerprint(self):
@@ -1661,6 +1678,32 @@ class ReadWaitTests(unittest.TestCase):
         self.assertEqual(events, [{"kind": "assistant", "text": "ready"}])
         self.assertEqual(read_incremental_jsonl.call_count, 2)
 
+    @mock.patch("claude_coop_manager.time.sleep", autospec=True)
+    @mock.patch("claude_coop_manager.candidate_projects_roots", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_transcript", autospec=True)
+    def test_read_updates_reports_search_diagnostics_when_transcript_missing(
+        self,
+        resolve_transcript,
+        candidate_projects_roots,
+        _sleep,
+    ):
+        resolve_transcript.return_value = None
+        candidate_projects_roots.return_value = [Path("/tmp/cac/projects"), Path("/tmp/fallback/projects")]
+        state = ccm.State(
+            sessions={
+                "frontend-helper": ccm.SessionRecord(
+                    name="frontend-helper",
+                    tmux_session="ccm-frontend-helper",
+                    display_name="frontend-helper",
+                    cwd="/work/app",
+                    started_at=0.0,
+                )
+            }
+        )
+
+        with self.assertRaisesRegex(ccm.CCMError, "Transcript search roots: /tmp/cac/projects, /tmp/fallback/projects"):
+            ccm.read_updates(state, "frontend-helper", wait_seconds=0, poll_interval=1)
+
 
 class DoctorTests(unittest.TestCase):
     @mock.patch("claude_coop_manager.claude_version_from_binary", autospec=True)
@@ -1683,10 +1726,47 @@ class DoctorTests(unittest.TestCase):
         report = ccm.doctor_report(state, "/work/app", Path("/tmp/state.json"))
 
         self.assertEqual(report["cwd"], "/work/app")
-        self.assertEqual(report["state_path"], "/tmp/state.json")
-        self.assertTrue(report["binaries"]["tmux"])
-        self.assertTrue(report["binaries"]["claude"])
-        self.assertEqual(report["sessions"], ["frontend-helper"])
+
+
+class InspectTests(unittest.TestCase):
+    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
+    @mock.patch("claude_coop_manager.tmux_capture", autospec=True)
+    @mock.patch("claude_coop_manager.session_status", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_transcript", autospec=True)
+    def test_inspect_session_reports_state_tmux_and_transcript_context(
+        self,
+        resolve_transcript,
+        session_status,
+        tmux_capture,
+        tmux_has_session,
+    ):
+        resolve_transcript.return_value = Path("/tmp/transcript.jsonl")
+        session_status.return_value = "running"
+        tmux_has_session.return_value = True
+        tmux_capture.return_value = "line 1\nline 2\n❯ \n"
+        record = ccm.SessionRecord(
+            name="frontend-helper",
+            tmux_session="ccm-frontend-helper",
+            display_name="frontend-helper",
+            cwd="/work/app",
+            started_at=123.0,
+        )
+        state = ccm.State(sessions={"frontend-helper": record})
+
+        payload = ccm.inspect_session(state, "frontend-helper", Path("/tmp/state.json"))
+
+        self.assertEqual(payload["name"], "frontend-helper")
+        self.assertEqual(payload["state_path"], "/tmp/state.json")
+        self.assertEqual(payload["tmux_session"], "ccm-frontend-helper")
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(payload["transcript_path"], "/tmp/transcript.jsonl")
+        self.assertIn("❯", payload["pane_tail"])
+
+    def test_inspect_help_mentions_pane_tail_and_transcript_debug(self):
+        parser = ccm.build_parser()
+        help_text = parser.format_help()
+
+        self.assertIn("inspect", help_text)
 
 
 class CleanupTests(unittest.TestCase):

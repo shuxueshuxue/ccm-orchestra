@@ -116,6 +116,14 @@ ccm-smoke --cwd "$PWD"
 
 `ccm-smoke` 会按很窄的顺序跑一遍：`doctor -> start -> list -> send -> read -> kill -> cleanup`，同时记录当前的 `codex-heartbeat status`。如果 helper 没有读回预期的 probe token，它会直接失败，不会掩盖问题。
 
+如果 `read` 结果是空的，或者 transcript 解析看起来不对，不要靠猜，直接看 live 现场：
+
+```bash
+ccm inspect frontend-helper --cwd "$PWD"
+```
+
+它会打印 state path、tmux session、已解析的 transcript path、transcript search roots，以及最近一段 pane tail。
+
 ### 保持一个长期的 Claude 搭档
 
 - 每个可见的 Codex tab 都应该在 tmux 里维护一个长期存活、值得信任的专属 Claude helper，反复复用。不要每做完一件小事就 kill 掉 helper。持久 session 本身就是核心价值。

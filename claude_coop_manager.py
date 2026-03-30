@@ -640,6 +640,28 @@ def resolve_transcript(record: SessionRecord) -> Path | None:
     return None
 
 
+def describe_transcript_search(record: SessionRecord) -> dict[str, Any]:
+    roots = [str(root) for root in candidate_projects_roots()]
+    return {
+        "display_name": record.display_name,
+        "cwd": record.cwd,
+        "started_after": record.started_at,
+        "projects_roots": roots,
+        "existing_transcript_path": record.transcript_path or "",
+    }
+
+
+def format_transcript_search_failure(record: SessionRecord) -> str:
+    payload = describe_transcript_search(record)
+    roots = ", ".join(payload["projects_roots"]) if payload["projects_roots"] else "(none)"
+    return (
+        f"No transcript resolved yet for session {record.name}. Send a prompt first.\n"
+        f"Transcript search roots: {roots}\n"
+        f"Display name: {payload['display_name']}\n"
+        f"CWD: {payload['cwd']}"
+    )
+
+
 def session_status(record: SessionRecord) -> str:
     return "running" if tmux_has_session(record.tmux_session) else "dead"
 
@@ -696,6 +718,27 @@ def workspace_identity(cwd: str) -> dict[str, str]:
         "helper_status": session_status(session) if session is not None else "",
         "helper_tmux_session": session.tmux_session if session is not None else "",
         "helper_transcript": transcript,
+    }
+
+
+def inspect_session(state: State, name: str, state_path: Path) -> dict[str, Any]:
+    record = state.sessions.get(name)
+    if record is None:
+        raise CCMError(f"Unknown managed session: {name}")
+    transcript = resolve_transcript(record)
+    pane_tail = ""
+    if tmux_has_session(record.tmux_session):
+        pane_tail = pane_excerpt(tmux_capture(record.tmux_session))
+    return {
+        "name": record.name,
+        "state_path": str(state_path),
+        "cwd": record.cwd,
+        "display_name": record.display_name,
+        "tmux_session": record.tmux_session,
+        "status": session_status(record),
+        "transcript_path": record.transcript_path or (str(transcript) if transcript else ""),
+        "transcript_search": describe_transcript_search(record),
+        "pane_tail": pane_tail,
     }
 
 
@@ -887,7 +930,7 @@ def read_updates(
         transcript = resolve_transcript(record)
         if transcript is None:
             if time.time() >= deadline:
-                raise CCMError(f"No transcript resolved yet for session {name}. Send a prompt first.")
+                raise CCMError(format_transcript_search_failure(record))
             time.sleep(poll_interval)
             continue
 
@@ -2137,6 +2180,10 @@ def render_guide(audience: str) -> str:
         3. `ccm send frontend-helper "..." --cwd "$PWD"`
         4. `ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"`
 
+        If `read` is empty or transcript resolution looks wrong:
+        - run `ccm inspect frontend-helper --cwd "$PWD"`
+        - look at the transcript search roots and pane tail before guessing
+
         Use `ccm open` only when:
         - the helper looks stuck and transcript output is not enough
         - you want supervised live observation
@@ -2180,6 +2227,17 @@ def build_parser() -> argparse.ArgumentParser:
     start_parser.add_argument("name")
 
     subparsers.add_parser("list", help="List managed Claude sessions")
+
+    inspect_parser = subparsers.add_parser(
+        "inspect",
+        help="tmux layer: print session diagnostics for transcript-debug and pane capture",
+        description=(
+            "Inspect is the fallback when 'read' is empty or transcript resolution lags. "
+            "It prints the session state path, tmux session, resolved transcript path, "
+            "transcript search roots, and a recent tmux pane tail."
+        ),
+    )
+    inspect_parser.add_argument("name")
 
     send_parser = subparsers.add_parser("send", help="tmux layer: send a prompt to a managed Claude session")
     send_parser.add_argument("name")
@@ -2442,6 +2500,10 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "list":
             emit_list(list(state.sessions.values()), as_json=args.json)
+            return 0
+
+        if args.command == "inspect":
+            emit(inspect_session(state, args.name, state_path), as_json=args.json)
             return 0
 
         if args.command == "send":
