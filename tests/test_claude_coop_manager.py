@@ -309,6 +309,16 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("reply hint", help_text)
         self.assertIn("no receipt convention", help_text)
 
+    def test_read_help_explains_poll_model_and_contrasts_with_relay(self):
+        parser = ccm.build_parser()
+        read_parser = parser._subparsers._group_actions[0].choices["read"]
+        help_text = read_parser.format_help()
+
+        self.assertIn("poll-based", help_text)
+        self.assertIn("does not push a", help_text)
+        self.assertIn("wakeup into another agent tab", help_text)
+        self.assertIn("use 'relay'", help_text)
+
 
 class CommandBuildTests(unittest.TestCase):
     @mock.patch("claude_coop_manager.resolve_claude_executable", autospec=True)

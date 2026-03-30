@@ -49,6 +49,7 @@ The actual rule is:
 
 - the canonical path is interactive Claude in `tmux`
 - `tmux` then gives us the process boundary we want for reuse, transcript reading, inspection, restart, and cleanup
+- the same interactive helper can be approached from both sides: humans can attach and inspect it, while programmatic tooling can still send, read, doctor, restart, and supervise it
 - do not build the main workflow around `claude -p`
 
 ## Features

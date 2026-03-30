@@ -994,12 +994,31 @@ def build_parser() -> argparse.ArgumentParser:
     send_parser.add_argument("name")
     send_parser.add_argument("prompt")
 
-    read_parser = subparsers.add_parser("read", help="tmux layer: read unread transcript events from the helper")
+    read_parser = subparsers.add_parser(
+        "read",
+        help="tmux layer: poll unread transcript events from the helper",
+        description=(
+            "Read is a poll-based wait on Claude transcript output. It does not push a wakeup "
+            "into another agent tab. Use it when you are waiting for helper output from the tmux "
+            "session itself. If you need another visible tab to wake up and answer later, use "
+            "'relay' or a heartbeat-style push mechanism instead."
+        ),
+    )
     read_parser.add_argument("name")
     read_parser.add_argument("--include-user", action="store_true")
     read_parser.add_argument("--include-thinking", action="store_true")
-    read_parser.add_argument("--wait-seconds", type=float, default=0.0)
-    read_parser.add_argument("--poll-interval", type=float, default=2.0)
+    read_parser.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=0.0,
+        help="Total poll window for waiting on new transcript events.",
+    )
+    read_parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=2.0,
+        help="Seconds between transcript polling attempts while waiting.",
+    )
 
     kill_parser = subparsers.add_parser("kill", help="Kill managed sessions")
     kill_parser.add_argument("names", nargs="*")

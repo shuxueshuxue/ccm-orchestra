@@ -49,6 +49,7 @@
 
 - canonical path 是在 `tmux` 里跑交互式 Claude
 - `tmux` 再给我们提供想要的进程边界，方便复用、读 transcript、检查、重启和清理
+- 同一个交互式 helper 可以同时被两边接触：人可以 attach/观察，程序化工具也仍然可以 send、read、doctor、restart、supervise
 - 不要把主工作流建立在 `claude -p` 上
 
 ## 功能特性
