@@ -870,6 +870,25 @@ class WeChatPhoneTests(unittest.TestCase):
         )
         wechat_reply.assert_not_called()
 
+    @mock.patch("claude_coop_manager.wechat_reply", autospec=True)
+    def test_queue_and_flush_wechat_reply_sends_immediately(self, wechat_reply):
+        state = ccm.WeChatTransportState(
+            token="bot-token",
+            context_tokens={"alice@im.wechat": "ctx-1"},
+        )
+        wechat_reply.return_value = {"ok": True, "user_id": "alice@im.wechat"}
+
+        payload = ccm.queue_and_flush_wechat_reply(
+            state,
+            user_id="alice@im.wechat",
+            text="queued hello",
+        )
+
+        self.assertEqual(payload["queued"], True)
+        self.assertEqual(payload["sent_count"], 1)
+        self.assertEqual(state.pending_replies, [])
+        wechat_reply.assert_called_once_with(state, user_id="alice@im.wechat", text="queued hello")
+
     def test_load_and_save_wechat_transport_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "wechat.json"

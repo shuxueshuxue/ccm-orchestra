@@ -1529,6 +1529,13 @@ def wechat_queue_reply(state: WeChatTransportState, *, user_id: str, text: str) 
     return {"queued": True, "user_id": user_id, "pending_count": len(state.pending_replies)}
 
 
+def queue_and_flush_wechat_reply(state: WeChatTransportState, *, user_id: str, text: str) -> dict[str, Any]:
+    payload = wechat_queue_reply(state, user_id=user_id, text=text)
+    sent = flush_pending_wechat_replies(state)
+    payload["sent_count"] = len(sent)
+    return payload
+
+
 def flush_pending_wechat_replies(state: WeChatTransportState) -> list[dict[str, Any]]:
     sent: list[dict[str, Any]] = []
     while state.pending_replies:
@@ -2489,7 +2496,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "wechat-queue-reply":
             current_transport = require_wechat_transport_state(wechat_transport)
-            payload = wechat_queue_reply(current_transport, user_id=args.user_id, text=args.message)
+            payload = queue_and_flush_wechat_reply(current_transport, user_id=args.user_id, text=args.message)
             save_wechat_transport_state(current_transport, wechat_transport_path)
             emit(payload, as_json=args.json)
             return 0
