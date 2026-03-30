@@ -58,6 +58,7 @@ cd ccm-orchestra
 
 python3 -m unittest tests/test_claude_coop_manager.py -v
 
+ccm guide agent
 ccm doctor --cwd "$PWD"
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
@@ -83,6 +84,8 @@ Use the global `ccm` only. If a helper starts failing after a Claude or `ccm` up
 1. Run `ccm doctor --cwd "$PWD"`.
 2. Check for `@@@claude-path-mismatch` / `@@@claude-version-mismatch`.
 3. Restart the helper. Existing helpers keep the binary and config root they started with.
+
+If you are an agent or another LLM, run `ccm guide agent` before you improvise. That guide contains the longer operating rules, the tmux vs kitty split, and the wakeup model.
 
 ### Minimal everyday usage
 

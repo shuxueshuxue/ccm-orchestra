@@ -2,6 +2,8 @@
 
 Use `ccm` when you want the canonical interactive Claude Code path instead of building around `claude --print`.
 
+Before you improvise, run `ccm guide agent`. That is the long-form operator guide for agents and LLMs.
+
 This system has two layers:
 
 - `tmux` layer: the default path for persistent interactive Claude helpers

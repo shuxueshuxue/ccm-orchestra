@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import textwrap
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -968,6 +969,78 @@ def emit_list(records: list[SessionRecord], *, as_json: bool) -> None:
         )
 
 
+def render_guide(audience: str) -> str:
+    if audience == "human":
+        return textwrap.dedent(
+            """
+            CCM quick guide
+
+            Daily loop: start -> send -> read
+
+            1. ccm doctor --cwd "$PWD"
+            2. ccm start frontend-helper --cwd "$PWD"
+            3. ccm send frontend-helper "..." --cwd "$PWD"
+            4. ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"
+
+            Keep the helper alive when the tab will keep collaborating with it.
+            Do not kill and recreate the helper after every small task unless you are
+            explicitly resetting the scene.
+
+            Use ccm guide agent when you want the longer operating rules for agents and LLMs.
+            """
+        ).strip()
+
+    if audience != "agent":
+        raise CCMError(f"Unsupported guide audience: {audience}")
+
+    return textwrap.dedent(
+        """
+        CCM agent guide
+
+        Canonical rules:
+        - Use global `ccm` only. Do not use repo-local launchers.
+        - Run `ccm doctor --cwd "$PWD"` before blaming ccm.
+        - If doctor reports `@@@claude-path-mismatch` or `@@@claude-version-mismatch`,
+          restart the helper.
+
+        Core model:
+        - tmux layer = the real helper/session layer.
+        - kitty layer = the visible collaboration layer.
+        - These are paired capabilities. tmux keeps the helper alive and reusable.
+          kitty makes the collaboration visible and relay-capable.
+
+        Wakeup model:
+        - `ccm read` is poll-based. It waits on Claude transcript output from the tmux helper.
+        - `ccm relay` is push-based. It wakes another visible tab and gives it enough sender
+          context to reply later.
+        - Do not expect `read` to wake another agent tab for you.
+
+        Recommended operating pattern:
+        - Each visible Codex tab should usually keep one dedicated, trusted, long-lived Claude
+          helper in tmux and reuse it over time.
+        - Do not kill the helper after every small task. The persistent session is the point.
+        - Claude is not just an advisor. It can directly edit the branch too, especially for
+          frontend and documentation work.
+
+        Normal loop:
+        1. `ccm doctor --cwd "$PWD"`
+        2. `ccm start frontend-helper --cwd "$PWD"`
+        3. `ccm send frontend-helper "..." --cwd "$PWD"`
+        4. `ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"`
+
+        Use `ccm open` only when:
+        - the helper looks stuck and transcript output is not enough
+        - you want supervised live observation
+        - you are deliberately doing visible-tab collaboration
+
+        Use `ccm relay` instead of `ccm tell` when:
+        - you are an agent inside kitty
+        - you expect a useful reply or acknowledgment
+        - the receiver needs sender identity, worktree, branch, helper, or scene context
+        """
+    ).strip()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -978,7 +1051,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Daily loop: start -> send -> read. Use interactive Claude sessions in tmux, "
             "not non-interactive print mode. Use 'open' only when the transcript is not "
             "enough: debugging a stuck helper, live observation, or deliberate visible-tab "
-            "collaboration."
+            "collaboration. For agents/LLMs, run 'ccm guide agent' for the longer operating "
+            "rules."
         ),
     )
     parser.add_argument("--cwd", help="Select the session namespace directory; for start, also use it as the Claude cwd")
@@ -1062,6 +1136,22 @@ def build_parser() -> argparse.ArgumentParser:
     relay_parser.add_argument("--task", default="")
     relay_parser.add_argument("--scene", default="")
     relay_parser.add_argument("--ports", default="")
+
+    guide_parser = subparsers.add_parser(
+        "guide",
+        help="Read long-form guidance for humans or agents",
+        description=(
+            "Read long-form guidance for humans, agents and LLMs. "
+            "Use 'guide agent' for the full playbook."
+        ),
+    )
+    guide_parser.add_argument(
+        "audience",
+        nargs="?",
+        default="human",
+        choices=("human", "agent"),
+        help="Which guide to render: human or agent",
+    )
 
     subparsers.add_parser("doctor", help="tmux layer: report environment and session namespace health")
 
@@ -1165,6 +1255,10 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 as_json=args.json,
             )
+            return 0
+
+        if args.command == "guide":
+            print(render_guide(args.audience))
             return 0
 
         if args.command == "doctor":

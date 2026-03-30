@@ -58,6 +58,7 @@ cd ccm-orchestra
 
 python3 -m unittest tests/test_claude_coop_manager.py -v
 
+ccm guide agent
 ccm doctor --cwd "$PWD"
 ccm start frontend-helper --cwd "$PWD"
 ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
@@ -83,6 +84,8 @@ codex-heartbeat status
 1. 先跑 `ccm doctor --cwd "$PWD"`。
 2. 看是否出现 `@@@claude-path-mismatch` / `@@@claude-version-mismatch`。
 3. 重启 helper。已经在跑的 helper 会继续沿用自己启动时的 binary 和 config root。
+
+如果你是 agent 或其他 LLM，不要直接即兴发挥，先跑 `ccm guide agent`。那里面有完整的操作规则、tmux/kitty 分层，以及唤醒模型说明。
 
 ### 最常用的一组命令
 

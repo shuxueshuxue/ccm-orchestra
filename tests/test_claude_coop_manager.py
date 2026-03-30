@@ -290,6 +290,7 @@ class ParserHelpTests(unittest.TestCase):
 
         self.assertIn("Daily loop: start -> send -> read.", help_text)
         self.assertIn("Use 'open' only", help_text)
+        self.assertIn("For agents/LLMs, run 'ccm guide agent'", help_text)
 
     def test_open_help_marks_open_as_exception_tool(self):
         parser = ccm.build_parser()
@@ -318,6 +319,33 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("does not push a", help_text)
         self.assertIn("wakeup into another agent tab", help_text)
         self.assertIn("use 'relay'", help_text)
+
+    def test_guide_help_mentions_agent_playbook(self):
+        parser = ccm.build_parser()
+        guide_parser = parser._subparsers._group_actions[0].choices["guide"]
+        help_text = guide_parser.format_help()
+
+        self.assertIn("long-form guidance", help_text)
+        self.assertIn("agents and LLMs", help_text)
+
+
+class GuideOutputTests(unittest.TestCase):
+    def test_render_agent_guide_covers_long_lived_helper_and_relay(self):
+        guide_text = ccm.render_guide("agent")
+
+        self.assertIn("global `ccm` only", guide_text)
+        self.assertIn("long-lived", guide_text)
+        self.assertIn("dedicated", guide_text)
+        self.assertIn("relay", guide_text)
+        self.assertIn("push", guide_text)
+        self.assertIn("poll", guide_text)
+        self.assertIn("doctor", guide_text)
+
+    def test_render_human_guide_points_to_agent_guide_when_needed(self):
+        guide_text = ccm.render_guide("human")
+
+        self.assertIn("start -> send -> read", guide_text)
+        self.assertIn("ccm guide agent", guide_text)
 
 
 class CommandBuildTests(unittest.TestCase):
