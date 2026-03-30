@@ -105,6 +105,7 @@ ccm cleanup --cwd "$PWD"
 ### 保持一个长期的 Claude 搭档
 
 - 每个可见的 Codex tab 都应该在 tmux 里维护一个长期存活、值得信任的专属 Claude helper，反复复用。不要每做完一件小事就 kill 掉 helper。持久 session 本身就是核心价值。
+- helper 名称按职责取，并尽量具体，比如 `frontend-helper`、`docs-editor`。不要在当前 namespace 里重复使用一个含糊又容易撞名的名字。
 - Claude 不只是顾问。它可以直接编辑分支、commit 或 push，尤其适合前端和文档类工作。把它当作有写权限的协作者，而不是只读的建议机器。
 
 ### 启动交互式 Claude Session

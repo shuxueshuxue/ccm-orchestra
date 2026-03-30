@@ -1018,6 +1018,9 @@ def render_guide(audience: str) -> str:
         Recommended operating pattern:
         - Each visible Codex tab should usually keep one dedicated, trusted, long-lived Claude
           helper in tmux and reuse it over time.
+        - Pick a specific helper name per job, such as `frontend-helper` or
+          `docs-editor`. Avoid colliding with helper names that already exist in the
+          current namespace.
         - Do not kill the helper after every small task. The persistent session is the point.
         - Claude is not just an advisor. It can directly edit the branch too, especially for
           frontend and documentation work.
@@ -1059,7 +1062,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    start_parser = subparsers.add_parser("start", help="tmux layer: start a persistent interactive Claude session")
+    start_parser = subparsers.add_parser(
+        "start",
+        help="tmux layer: start a persistent interactive Claude session",
+        description=(
+            "Start a helper in the current namespace. Pick a specific helper name such as "
+            "'frontend-helper' or 'docs-editor'. Avoid colliding with helper names that "
+            "already exist in the current namespace."
+        ),
+    )
     start_parser.add_argument("name")
 
     subparsers.add_parser("list", help="List managed Claude sessions")

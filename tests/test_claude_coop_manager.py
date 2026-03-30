@@ -301,6 +301,15 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("start ->", help_text)
         self.assertIn("send -> read", help_text)
 
+    def test_start_help_mentions_specific_names_and_namespace_collisions(self):
+        parser = ccm.build_parser()
+        start_parser = parser._subparsers._group_actions[0].choices["start"]
+        help_text = start_parser.format_help()
+
+        self.assertIn("specific helper name", help_text)
+        self.assertIn("current namespace", help_text)
+        self.assertIn("frontend-helper", help_text)
+
     def test_relay_help_marks_relay_as_preferred_over_tell_for_agents(self):
         parser = ccm.build_parser()
         relay_parser = parser._subparsers._group_actions[0].choices["relay"]
@@ -340,6 +349,8 @@ class GuideOutputTests(unittest.TestCase):
         self.assertIn("push", guide_text)
         self.assertIn("poll", guide_text)
         self.assertIn("doctor", guide_text)
+        self.assertIn("specific", guide_text)
+        self.assertIn("current namespace", guide_text)
 
     def test_render_human_guide_points_to_agent_guide_when_needed(self):
         guide_text = ccm.render_guide("human")
