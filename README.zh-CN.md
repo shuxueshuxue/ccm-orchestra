@@ -24,6 +24,7 @@
 - 按工作目录隔离命名空间，不同项目可并行使用同名 helper
 - 从 Claude 的真实 JSONL transcript 中增量读取新消息
 - 在需要人工查看时，通过 `kitty` 重新打开会话
+- 列出当前可见的 `kitty` tabs，并按 title 直接发消息
 - 自带心跳工具，避免监督中的 Codex tab 静默死亡
 - `doctor` 命令用于环境和命名空间自检
 - `read --wait-seconds` 用于处理 transcript 落盘延迟
@@ -38,7 +39,7 @@
 - `claude`
 - 如果要用 `open` 或 heartbeat，需要 `kitty`
 
-### 2. 直接运行
+### 2. 在任意目录通过全局 CLI 运行
 
 ```bash
 git clone <repo-url>
@@ -46,11 +47,14 @@ cd ccm-orchestra
 
 python3 -m unittest tests/test_claude_coop_manager.py -v
 
-bin/ccm start frontend-helper
-bin/ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements."
-bin/ccm read frontend-helper --wait-seconds 20
-bin/ccm open frontend-helper
-bin/ccm kill frontend-helper
+ccm doctor --cwd "$PWD"
+ccm start frontend-helper --cwd "$PWD"
+ccm send frontend-helper "Review the current frontend flow and suggest 2-3 improvements." --cwd "$PWD"
+ccm read frontend-helper --wait-seconds 20 --cwd "$PWD"
+ccm open frontend-helper --cwd "$PWD"
+ccm tabs --listen-on unix:/tmp/mykitty
+ccm tell "scheduled-tasks" "Please review the current frontend and reply in this tab." --listen-on unix:/tmp/mykitty
+ccm kill frontend-helper --cwd "$PWD"
 ```
 
 ### 3. 安装成命令行工具
@@ -63,6 +67,30 @@ codex-heartbeat status
 ```
 
 ## 命令说明
+
+### Canonical rule
+
+只使用全局 `ccm`。如果 Claude 或 `ccm` 升级后 helper 开始异常：
+
+1. 先跑 `ccm doctor --cwd "$PWD"`。
+2. 看是否出现 `@@@claude-path-mismatch` / `@@@claude-version-mismatch`。
+3. 重启 helper。已经在跑的 helper 会继续沿用自己启动时的 binary 和 config root。
+
+### 最常用的一组命令
+
+```bash
+ccm start frontend-helper --cwd "$PWD"
+ccm send frontend-helper "Review the frontend in this branch and propose improvements." --cwd "$PWD"
+ccm read frontend-helper --wait-seconds 30 --cwd "$PWD"
+ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
+ccm kill frontend-helper --cwd "$PWD"
+```
+
+如果 session 崩了，或者 `kill` 中断了：
+
+```bash
+ccm cleanup --cwd "$PWD"
+```
 
 ### 启动交互式 Claude Session
 
@@ -91,6 +119,19 @@ ccm --cwd ~/Codebase/leonai/frontend read frontend-helper --wait-seconds 30
 ```bash
 ccm doctor
 ```
+
+### 把可见 kitty tab 当成 peer 来通信
+
+```bash
+ccm tabs --listen-on unix:/tmp/mykitty
+ccm relay "feat/main-thread-for-member" "Use Claude to review the UI and report back here." \
+  --listen-on unix:/tmp/mykitty \
+  --cwd "$PWD" \
+  --task "frontend review" \
+  --scene "untouched"
+```
+
+`ccm tabs` 现在会直接显示 peer 的 worktree、git branch 和 helper 身份。`ccm relay` 会自动包上一层默认 envelope 和 `reply-via` 提示，新人不需要自己记住上下文格式。
 
 ### 保持监督用的 Codex tab 存活
 
@@ -125,11 +166,13 @@ codex-heartbeat stop
 - `start --cwd <dir>` 会严格使用指定目录
 - heartbeat 真的能把消息注入 `Main` `kitty` tab
 - 真实的交互式 Claude Session 能正常启动并接收 prompt
+- 可见的 kitty tab 可以被枚举出来，并且能按 title 收到注入消息
 
 ## 注意事项
 
 - 如果 Claude 上游 API 自己不稳定，助手输出还是可能延迟或失败；工具不会掩盖这个事实。
 - `read` 依赖 Claude transcript 落盘；`--wait-seconds` 只能缓解延迟，不能修复上游宕机。
+- transcript 解析会优先跟随当前 Claude 的真实 config root，包括 `cac` 这种隔离环境；找不到时才回退到默认的 Claude projects 目录。
 - `kitty` 相关能力依赖有效的 `KITTY_LISTEN_ON`。
 - 这个工具故意保持简单，不打算发展成一个庞杂的 agent 平台。
 
@@ -137,6 +180,7 @@ codex-heartbeat stop
 
 ```text
 ccm-orchestra/
+├── AGENTS.md
 ├── bin/
 │   ├── ccm
 │   └── codex-heartbeat

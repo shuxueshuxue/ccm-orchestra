@@ -20,7 +20,7 @@ from typing import Any
 
 STATE_VERSION = 1
 DEFAULT_HOME_ROOT = Path("~/.claude-codex-manager").expanduser()
-CLAUDE_PROJECTS_ROOT = Path(
+DEFAULT_CLAUDE_PROJECTS_ROOT = Path(
     os.environ.get("CCM_CLAUDE_PROJECTS_ROOT", "~/.claude/projects")
 ).expanduser()
 READY_DELAY_SECONDS = 2.0
@@ -57,8 +57,35 @@ def sanitize_name(name: str) -> str:
     return normalized
 
 
+def resolve_claude_executable() -> str:
+    path = shutil.which("claude")
+    if path is None:
+        raise CCMError("Missing required binary: claude")
+    return path
+
+
+def launch_environment() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key in ("CLAUDE_CONFIG_DIR",):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    return env
+
+
 def build_claude_command(display_name: str) -> list[str]:
-    return ["claude", "--dangerously-skip-permissions", "-n", display_name]
+    return [resolve_claude_executable(), "--dangerously-skip-permissions", "-n", display_name]
+
+
+def build_tmux_claude_command(display_name: str) -> str:
+    command = build_claude_command(display_name)
+    env_prefix = [f"{key}={value}" for key, value in launch_environment().items()]
+    if env_prefix:
+        # @@@tmux-launch-env - tmux sessions do not reliably inherit the caller's Claude
+        # wrapper environment, so the launch command pins both the resolved binary path
+        # and the active Claude config root instead of trusting tmux's stale PATH.
+        command = ["env", *env_prefix, *command]
+    return shlex.join(command)
 
 
 def _parse_timestamp(value: str | None) -> float:
@@ -80,6 +107,36 @@ def default_state_path(cwd: str | None = None) -> Path:
 
 def build_tmux_session_name(name: str, cwd: str) -> str:
     return f"ccm-{sanitize_name(name)}-{namespace_suffix(cwd)}"
+
+
+def candidate_projects_roots(home: Path | None = None) -> list[Path]:
+    if "CCM_CLAUDE_PROJECTS_ROOT" in os.environ:
+        return [Path(os.environ["CCM_CLAUDE_PROJECTS_ROOT"]).expanduser()]
+
+    home = home or Path.home()
+    roots: list[Path] = []
+
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if config_dir:
+        roots.append(Path(config_dir).expanduser() / "projects")
+
+    current_cac = home / ".cac" / "current"
+    if current_cac.exists():
+        current_env = current_cac.read_text().strip()
+        if current_env:
+            roots.append(home / ".cac" / "envs" / current_env / ".claude" / "projects")
+
+    roots.append(home / ".claude" / "projects")
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        resolved = root.expanduser()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(resolved)
+    return deduped
 
 
 def namespace_cwd(explicit_cwd: str | None = None) -> str:
@@ -352,20 +409,177 @@ def resolve_transcript(record: SessionRecord) -> Path | None:
         path = Path(record.transcript_path)
         if path.exists():
             return path
-    return find_transcript_file(
-        projects_root=CLAUDE_PROJECTS_ROOT,
-        display_name=record.display_name,
-        cwd=record.cwd,
-        started_after=record.started_at,
-    )
+    for projects_root in candidate_projects_roots():
+        match = find_transcript_file(
+            projects_root=projects_root,
+            display_name=record.display_name,
+            cwd=record.cwd,
+            started_after=record.started_at,
+        )
+        if match is not None:
+            return match
+    return None
 
 
 def session_status(record: SessionRecord) -> str:
     return "running" if tmux_has_session(record.tmux_session) else "dead"
 
 
+def git_stdout(cwd: str, *args: str) -> str:
+    result = run_command(["git", "-C", cwd, *args], check=False)
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def git_repo_root(cwd: str) -> str:
+    return git_stdout(cwd, "rev-parse", "--show-toplevel")
+
+
+def git_branch(cwd: str) -> str:
+    return git_stdout(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+
+
+def canonical_session(records: list[SessionRecord]) -> SessionRecord | None:
+    if not records:
+        return None
+    live = [record for record in records if session_status(record) == "running"]
+    pool = live or records
+    return max(pool, key=lambda record: record.started_at)
+
+
+def workspace_identity(cwd: str) -> dict[str, str]:
+    if not cwd:
+        return {
+            "worktree": "",
+            "repo_root": "",
+            "branch": "",
+            "helper": "",
+            "helper_status": "",
+            "helper_tmux_session": "",
+            "helper_transcript": "",
+        }
+
+    resolved_cwd = namespace_cwd(cwd)
+    repo_root = git_repo_root(resolved_cwd) or resolved_cwd
+    branch = git_branch(resolved_cwd)
+    state = load_state(default_state_path(resolved_cwd))
+    session = canonical_session(list(state.sessions.values()))
+    transcript = ""
+    if session is not None:
+        resolved_transcript = resolve_transcript(session)
+        transcript = session.transcript_path or (str(resolved_transcript) if resolved_transcript else "")
+    return {
+        "worktree": resolved_cwd,
+        "repo_root": repo_root,
+        "branch": branch,
+        "helper": session.name if session is not None else "",
+        "helper_status": session_status(session) if session is not None else "",
+        "helper_tmux_session": session.tmux_session if session is not None else "",
+        "helper_transcript": transcript,
+    }
+
+
+def current_cac_name(home: Path | None = None) -> str:
+    home = home or Path.home()
+    current = home / ".cac" / "current"
+    if not current.exists():
+        return ""
+    return current.read_text().strip()
+
+
+def current_cac_claude_details(home: Path | None = None) -> dict[str, str]:
+    home = home or Path.home()
+    env_name = current_cac_name(home)
+    if not env_name:
+        return {}
+    env_dir = home / ".cac" / "envs" / env_name
+    version = ""
+    version_file = env_dir / "version"
+    if version_file.exists():
+        version = version_file.read_text().strip()
+    actual_path = ""
+    if version:
+        candidate = home / ".cac" / "versions" / version / "claude"
+        if candidate.exists():
+            actual_path = str(candidate)
+    if not actual_path:
+        real = home / ".cac" / "real_claude"
+        if real.exists():
+            actual_path = real.read_text().strip()
+    return {
+        "env_name": env_name,
+        "actual_path": actual_path,
+        "version": version,
+        "config_dir": str(env_dir / ".claude"),
+    }
+
+
+def claude_version_from_binary(path: str) -> str:
+    if not path:
+        return ""
+    result = run_command([path, "--version"], check=False)
+    return result.stdout.strip() or result.stderr.strip()
+
+
+def command_probe(*, env: dict[str, str] | None = None) -> dict[str, str]:
+    target_env = env or os.environ
+    path = shutil.which("claude", path=target_env.get("PATH")) or ""
+    version = ""
+    actual_path = path
+    config_dir = target_env.get("CLAUDE_CONFIG_DIR", "")
+    cac_details = current_cac_claude_details()
+    if path == str(Path.home() / ".cac" / "bin" / "claude") and cac_details:
+        actual_path = cac_details.get("actual_path", path)
+        config_dir = config_dir or cac_details.get("config_dir", "")
+        if cac_details.get("version"):
+            version = f"{cac_details['version']} (Claude Code via CAC)"
+    if not version and actual_path:
+        version = claude_version_from_binary(actual_path)
+    return {
+        "claude_path": path,
+        "actual_claude_path": actual_path,
+        "claude_version": version,
+        "claude_config_dir": config_dir,
+    }
+
+
+def tmux_global_environment() -> dict[str, str]:
+    env: dict[str, str] = {}
+    result = run_command(["tmux", "show-environment", "-g"], check=False)
+    if result.returncode != 0:
+        return env
+    for line in result.stdout.splitlines():
+        if not line or line.startswith("-") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        env[key] = value
+    return env
+
+
 def doctor_report(state: State, cwd: str, state_path: Path) -> dict[str, Any]:
     endpoint = os.environ.get("KITTY_LISTEN_ON")
+    shell_probe = command_probe()
+    tmux_env = tmux_global_environment()
+    tmux_probe = command_probe(env={**os.environ, **tmux_env})
+    launch_probe = {
+        "claude_path": resolve_claude_executable() if shutil.which("claude") else "",
+        "claude_config_dir": launch_environment().get("CLAUDE_CONFIG_DIR", ""),
+        "tmux_command": build_tmux_claude_command("frontend-helper") if shutil.which("claude") else "",
+    }
+    warnings: list[str] = []
+    if tmux_probe["claude_path"] and tmux_probe["claude_path"] != shell_probe["claude_path"]:
+        warnings.append(
+            "@@@claude-path-mismatch - tmux global PATH resolves a different claude binary than the current shell."
+        )
+    if tmux_probe["claude_version"] and tmux_probe["claude_version"] != shell_probe["claude_version"]:
+        warnings.append(
+            "@@@claude-version-mismatch - tmux global PATH resolves a different claude version than the current shell."
+        )
+    if not tmux_probe["claude_config_dir"] and (Path.home() / ".cac" / "current").exists():
+        warnings.append(
+            "@@@missing-config-root - tmux global environment does not export CLAUDE_CONFIG_DIR, so stale launchers can fall back to ~/.claude."
+        )
     return {
         "cwd": cwd,
         "state_path": str(state_path),
@@ -377,6 +591,10 @@ def doctor_report(state: State, cwd: str, state_path: Path) -> dict[str, Any]:
             "claude": shutil.which("claude") is not None,
             "kitty": shutil.which("kitty") is not None,
         },
+        "shell": shell_probe,
+        "tmux_global": tmux_probe,
+        "launch": launch_probe,
+        "warnings": warnings,
     }
 
 
@@ -391,7 +609,7 @@ def start_session(state: State, name: str, cwd: str) -> SessionRecord:
     if tmux_has_session(tmux_session):
         raise CCMError(f"tmux session already exists: {tmux_session}")
 
-    command = shlex.join(build_claude_command(name))
+    command = build_tmux_claude_command(name)
     run_command(["tmux", "new-session", "-d", "-s", tmux_session, "-c", cwd, command])
 
     record = SessionRecord(
@@ -486,6 +704,22 @@ def kill_sessions(state: State, names: list[str]) -> list[str]:
     return killed
 
 
+def cleanup_sessions(state: State, kill_live: bool = False) -> dict[str, list[str]]:
+    removed_dead: list[str] = []
+    killed_live: list[str] = []
+    for name, record in list(state.sessions.items()):
+        is_live = tmux_has_session(record.tmux_session)
+        if is_live and kill_live:
+            run_command(["tmux", "kill-session", "-t", record.tmux_session], check=False)
+            killed_live.append(name)
+            del state.sessions[name]
+            continue
+        if not is_live:
+            removed_dead.append(name)
+            del state.sessions[name]
+    return {"removed_dead": removed_dead, "killed_live": killed_live}
+
+
 def open_in_kitty(state: State, name: str, listen_on: str | None) -> dict[str, str]:
     if name not in state.sessions:
         raise CCMError(f"Unknown managed session: {name}")
@@ -518,6 +752,156 @@ def open_in_kitty(state: State, name: str, listen_on: str | None) -> dict[str, s
         ]
     )
     return {"title": title, "endpoint": endpoint, "raw": result.stdout.strip()}
+
+
+def resolve_kitty_endpoint(listen_on: str | None) -> str:
+    endpoint = listen_on or os.environ.get("KITTY_LISTEN_ON")
+    if not endpoint:
+        raise CCMError("KITTY_LISTEN_ON is required")
+    return endpoint
+
+
+def kitty_window_worktree(window: dict[str, Any]) -> str:
+    env_pwd = str(window.get("env", {}).get("PWD", "")).strip()
+    if env_pwd:
+        # @@@kitty-pwd-source - kitty's `cwd` can lag behind for long-lived Codex shells,
+        # while `env.PWD` reflects the worktree the tab was launched for. Prefer that
+        # identity signal so cross-tab routing follows the visible branch/worktree.
+        return env_pwd
+    return str(window.get("cwd", ""))
+
+
+def list_kitty_tabs(listen_on: str | None) -> list[dict[str, str]]:
+    require_binary("kitty")
+    endpoint = resolve_kitty_endpoint(listen_on)
+    result = run_command(["kitty", "@", "--to", endpoint, "ls"])
+    payload = json.loads(result.stdout)
+
+    tabs: list[dict[str, str]] = []
+    for os_window in payload:
+        for tab in os_window.get("tabs", []):
+            windows = tab.get("windows", [])
+            if not windows:
+                continue
+            active_window = next((window for window in windows if window.get("is_active")), windows[0])
+            active_cwd = kitty_window_worktree(active_window)
+            identity = workspace_identity(active_cwd)
+            tabs.append(
+                {
+                    "title": str(tab.get("title", "")),
+                    "window_id": str(active_window["id"]),
+                    "cwd": active_cwd,
+                    "cmdline": " ".join(active_window.get("cmdline", [])),
+                    "branch": identity["branch"],
+                    "repo_root": identity["repo_root"],
+                    "helper": identity["helper"],
+                    "helper_status": identity["helper_status"],
+                    "helper_tmux_session": identity["helper_tmux_session"],
+                    "helper_transcript": identity["helper_transcript"],
+                }
+            )
+    return tabs
+
+
+def send_message_to_kitty_tab(title: str, message: str, listen_on: str | None) -> dict[str, str]:
+    endpoint = resolve_kitty_endpoint(listen_on)
+    matches = [tab for tab in list_kitty_tabs(endpoint) if tab["title"] == title]
+    if not matches:
+        raise CCMError(f"No kitty tab found with title: {title}")
+    if len(matches) > 1:
+        raise CCMError(f"Multiple kitty tabs found with title: {title}")
+
+    tab = matches[0]
+    run_command(
+        [
+            "kitty",
+            "@",
+            "--to",
+            endpoint,
+            "send-text",
+            "--match",
+            f"id:{tab['window_id']}",
+            message,
+        ]
+    )
+    run_command(
+        [
+            "kitty",
+            "@",
+            "--to",
+            endpoint,
+            "send-key",
+            "--match",
+            f"id:{tab['window_id']}",
+            "enter",
+        ]
+    )
+    return {"title": tab["title"], "window_id": tab["window_id"], "endpoint": endpoint}
+
+
+def resolve_current_sender_context(cwd: str, listen_on: str | None) -> dict[str, str]:
+    resolved_cwd = namespace_cwd(cwd)
+    context = workspace_identity(resolved_cwd)
+    context["title"] = context["branch"] or Path(resolved_cwd).name or "unknown"
+    current_window_id = os.environ.get("KITTY_WINDOW_ID")
+    if not current_window_id:
+        return context
+
+    for tab in list_kitty_tabs(listen_on):
+        if tab["window_id"] == current_window_id:
+            context["title"] = tab["title"] or context["title"]
+            break
+    return context
+
+
+def format_relay_message(
+    message: str,
+    sender: dict[str, str],
+    *,
+    task: str = "",
+    scene: str = "",
+    ports: str = "",
+) -> str:
+    reply_target = sender.get("title", "unknown")
+    fields = [
+        ("from", sender.get("title", "")),
+        ("worktree", sender.get("worktree", "")),
+        ("branch", sender.get("branch", "")),
+        ("repo", sender.get("repo_root", "")),
+        ("task", task or sender.get("branch", "") or sender.get("title", "")),
+        ("helper", sender.get("helper", "")),
+        ("tmux", sender.get("helper_tmux_session", "")),
+        ("transcript", sender.get("helper_transcript", "")),
+        ("ports", ports),
+        ("scene", scene),
+        ("reply-via", f'ccm relay {shlex.quote(reply_target)} "..."'),
+    ]
+    rendered = " | ".join(f"{key}: {value}" for key, value in fields if value)
+    return f"[{rendered}] {message}"
+
+
+def relay_message_to_kitty_tab(
+    title: str,
+    message: str,
+    listen_on: str | None,
+    *,
+    cwd: str,
+    task: str = "",
+    scene: str = "",
+    ports: str = "",
+) -> dict[str, str]:
+    sender = resolve_current_sender_context(cwd, listen_on)
+    relay_message = format_relay_message(
+        message,
+        sender,
+        task=task,
+        scene=scene,
+        ports=ports,
+    )
+    payload = send_message_to_kitty_tab(title, relay_message, listen_on)
+    payload["from"] = sender["title"]
+    payload["reply_via"] = f'ccm relay {shlex.quote(sender["title"])} "..."'
+    return payload
 
 
 def emit(data: Any, *, as_json: bool) -> None:
@@ -585,7 +969,14 @@ def emit_list(records: list[SessionRecord], *, as_json: bool) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Manage interactive Claude Code sessions for Codex")
+    parser = argparse.ArgumentParser(
+        description="Manage interactive Claude Code sessions for Codex",
+        epilog=(
+            "Daily loop: start -> send -> read. Use 'open' only when the transcript "
+            "is not enough: debugging a stuck helper, live observation, or deliberate "
+            "visible-tab collaboration."
+        ),
+    )
     parser.add_argument("--cwd", help="Select the session namespace directory; for start, also use it as the Claude cwd")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -610,9 +1001,44 @@ def build_parser() -> argparse.ArgumentParser:
     kill_parser.add_argument("names", nargs="*")
     kill_parser.add_argument("--all", action="store_true")
 
-    open_parser = subparsers.add_parser("open", help="Open a kitty tab attached to the tmux session")
+    cleanup_parser = subparsers.add_parser("cleanup", help="Remove dead sessions from state and optionally kill live ones")
+    cleanup_parser.add_argument("--kill-live", action="store_true")
+
+    open_parser = subparsers.add_parser(
+        "open",
+        help="Open a visible kitty tab for a managed helper when debugging or observing live output",
+        description=(
+            "Open is an exception tool, not part of the everyday loop. Prefer "
+            "'start -> send -> read' for normal work. Use 'open' only when you need "
+            "live observation, visible-tab collaboration, or to debug a stuck helper."
+        ),
+    )
     open_parser.add_argument("name")
     open_parser.add_argument("--listen-on")
+
+    tabs_parser = subparsers.add_parser("tabs", help="List visible kitty tabs that can receive messages")
+    tabs_parser.add_argument("--listen-on")
+
+    tell_parser = subparsers.add_parser("tell", help="Send a message to a visible kitty tab by title")
+    tell_parser.add_argument("title")
+    tell_parser.add_argument("message")
+    tell_parser.add_argument("--listen-on")
+
+    relay_parser = subparsers.add_parser(
+        "relay",
+        help="Preferred for agents in kitty: send a message with sender context and reply hint",
+        description=(
+            "Prefer 'relay' over 'tell' when you are an agent inside kitty and expect a "
+            "useful reply. Relay wraps the message with sender identity and a reply hint. "
+            "Use 'tell' only for raw fire-and-forget text with no receipt convention."
+        ),
+    )
+    relay_parser.add_argument("title")
+    relay_parser.add_argument("message")
+    relay_parser.add_argument("--listen-on")
+    relay_parser.add_argument("--task", default="")
+    relay_parser.add_argument("--scene", default="")
+    relay_parser.add_argument("--ports", default="")
 
     subparsers.add_parser("doctor", help="Report current environment and session namespace health")
 
@@ -684,9 +1110,38 @@ def main(argv: list[str] | None = None) -> int:
             emit([{"name": name, "status": "killed"} for name in killed], as_json=args.json)
             return 0
 
+        if args.command == "cleanup":
+            payload = cleanup_sessions(state, kill_live=args.kill_live)
+            save_state(state, state_path)
+            emit(payload, as_json=args.json)
+            return 0
+
         if args.command == "open":
             payload = open_in_kitty(state, args.name, args.listen_on)
             emit(payload, as_json=args.json)
+            return 0
+
+        if args.command == "tabs":
+            emit(list_kitty_tabs(args.listen_on), as_json=args.json)
+            return 0
+
+        if args.command == "tell":
+            emit(send_message_to_kitty_tab(args.title, args.message, args.listen_on), as_json=args.json)
+            return 0
+
+        if args.command == "relay":
+            emit(
+                relay_message_to_kitty_tab(
+                    args.title,
+                    args.message,
+                    args.listen_on,
+                    cwd=cwd,
+                    task=args.task,
+                    scene=args.scene,
+                    ports=args.ports,
+                ),
+                as_json=args.json,
+            )
             return 0
 
         if args.command == "doctor":

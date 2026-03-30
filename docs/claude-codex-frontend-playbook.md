@@ -4,8 +4,8 @@ This playbook is for a Codex session that wants to use interactive Claude Code a
 
 ## Tooling
 
-- Claude session manager: `/Users/lexicalmathical/worktrees/serverManagement--feat-claude-codex-coop/bin/ccm`
-- Manager repo docs: `/Users/lexicalmathical/worktrees/serverManagement--feat-claude-codex-coop/README.md`
+- Claude session manager: `ccm`
+- Manager repo docs: `~/Codebase/ccm-orchestra/README.md`
 - Default ready timeout: `CCM_READY_TIMEOUT_SECONDS=300`
 
 ## Rules
@@ -15,6 +15,27 @@ This playbook is for a Codex session that wants to use interactive Claude Code a
 - Treat Claude as a frontend reviewer and alternative-implementation generator, not as the owner of the whole branch.
 - Iterate. One prompt is not enough.
 
+## Stale Helper Warning
+
+If `ccm read frontend-helper --wait-seconds 30` keeps returning repeated `502` errors, the first thing to check is whether the helper tmux pane is still running an older Claude binary.
+
+A real failure case looked like this:
+
+- current shell resolved `claude` to `~/.cac/bin/claude`
+- the already-running helper had been launched earlier with `/opt/homebrew/bin/claude`
+
+In that situation, restarting the helper fixed the problem:
+
+```bash
+which claude && claude --version
+ccm doctor --cwd "$PWD"
+ccm kill frontend-helper
+ccm start frontend-helper --cwd "$PWD"
+```
+
+Do not assume the current shell's `which claude` reflects what an already-running tmux helper is using.
+If `ccm doctor` reports `@@@claude-path-mismatch` or `@@@claude-version-mismatch`, your tmux server would launch a different Claude than the current shell.
+
 ## Recommended loop
 
 Assume your current worktree is the repo you are already editing.
@@ -23,8 +44,7 @@ Assume your current worktree is the repo you are already editing.
 
 ```bash
 export CCM_READY_TIMEOUT_SECONDS=300
-CCM=/Users/lexicalmathical/worktrees/serverManagement--feat-claude-codex-coop/bin/ccm
-$CCM start frontend-helper --cwd "$PWD"
+ccm start frontend-helper --cwd "$PWD"
 ```
 
 ### 2. Ask Claude for a focused frontend review
@@ -32,19 +52,19 @@ $CCM start frontend-helper --cwd "$PWD"
 Use a prompt like this, but adapt it to your branch:
 
 ```bash
-$CCM send frontend-helper "You are helping on the current branch in $PWD. Review only the frontend/UI surfaces affected by this branch. First, inspect the relevant files, identify the current UX and visual weaknesses, and propose 2-3 better implementations. Stay minimal and branch-scoped."
+ccm send frontend-helper "You are helping on the current branch in $PWD. Review only the frontend/UI surfaces affected by this branch. First, inspect the relevant files, identify the current UX and visual weaknesses, and propose 2-3 better implementations. Stay minimal and branch-scoped."
 ```
 
 ### 3. Read only unread output
 
 ```bash
-$CCM read frontend-helper
+ccm read frontend-helper --wait-seconds 30
 ```
 
 If you want to watch the live session in a visible terminal:
 
 ```bash
-$CCM open frontend-helper
+ccm open frontend-helper --listen-on "${KITTY_LISTEN_ON:-unix:/tmp/mykitty}"
 ```
 
 ### 4. Iterate hard
@@ -52,14 +72,14 @@ $CCM open frontend-helper
 Run several rounds, not one:
 
 ```bash
-$CCM send frontend-helper "Now pick the best proposal and refine it into a concrete implementation plan with file-level suggestions."
-$CCM read frontend-helper
+ccm send frontend-helper "Now pick the best proposal and refine it into a concrete implementation plan with file-level suggestions."
+ccm read frontend-helper --wait-seconds 30
 
-$CCM send frontend-helper "Challenge your own proposal. Give me one bolder alternative and one safer alternative, with clear tradeoffs."
-$CCM read frontend-helper
+ccm send frontend-helper "Challenge your own proposal. Give me one bolder alternative and one safer alternative, with clear tradeoffs."
+ccm read frontend-helper --wait-seconds 30
 
-$CCM send frontend-helper "Based on the current code, what exact frontend changes should be made first for the highest user-facing payoff?"
-$CCM read frontend-helper
+ccm send frontend-helper "Based on the current code, what exact frontend changes should be made first for the highest user-facing payoff?"
+ccm read frontend-helper --wait-seconds 30
 ```
 
 Good iteration targets:
@@ -89,5 +109,5 @@ Good iteration targets:
 - You killed the helper when done:
 
 ```bash
-$CCM kill frontend-helper
+ccm kill frontend-helper
 ```

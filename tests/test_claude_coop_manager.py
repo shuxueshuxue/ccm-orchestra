@@ -176,6 +176,62 @@ class TranscriptResolutionTests(unittest.TestCase):
 
             self.assertEqual(match, right)
 
+    def test_candidate_projects_roots_prefers_active_cac_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            fallback = home / ".claude" / "projects"
+            active = home / ".cac" / "envs" / "main" / ".claude" / "projects"
+            active.mkdir(parents=True)
+            fallback.mkdir(parents=True)
+            (home / ".cac" / "current").parent.mkdir(parents=True, exist_ok=True)
+            (home / ".cac" / "current").write_text("main\n")
+
+            roots = ccm.candidate_projects_roots(home=home)
+
+            self.assertEqual(roots[0], active)
+            self.assertIn(fallback, roots)
+
+    @mock.patch("claude_coop_manager.candidate_projects_roots", autospec=True)
+    def test_resolve_transcript_searches_cac_projects_root(self, candidate_projects_roots):
+        with tempfile.TemporaryDirectory() as tmp:
+            fallback = Path(tmp) / "fallback"
+            active = Path(tmp) / "active"
+            fallback.mkdir()
+            active.mkdir()
+            candidate_projects_roots.return_value = [active, fallback]
+
+            transcript = active / "session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "custom-title",
+                        "customTitle": "hello-smoke-20260330-3",
+                        "sessionId": "right",
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "user",
+                        "cwd": "/work/app",
+                        "sessionId": "right",
+                    }
+                )
+                + "\n"
+            )
+
+            record = ccm.SessionRecord(
+                name="hello-smoke-20260330-3",
+                tmux_session="ccm-hello",
+                display_name="hello-smoke-20260330-3",
+                cwd="/work/app",
+                started_at=0.0,
+            )
+
+            match = ccm.resolve_transcript(record)
+
+            self.assertEqual(match, transcript)
+
 
 class NamespaceTests(unittest.TestCase):
     def test_tmux_session_name_includes_cwd_fingerprint(self):
@@ -228,15 +284,85 @@ class MainDispatchTests(unittest.TestCase):
         emit.assert_called_once()
 
 
+class ParserHelpTests(unittest.TestCase):
+    def test_root_help_mentions_daily_loop_and_open_exception(self):
+        help_text = ccm.build_parser().format_help()
+
+        self.assertIn("Daily loop: start -> send -> read.", help_text)
+        self.assertIn("Use 'open' only", help_text)
+
+    def test_open_help_marks_open_as_exception_tool(self):
+        parser = ccm.build_parser()
+        open_parser = parser._subparsers._group_actions[0].choices["open"]
+        help_text = open_parser.format_help()
+
+        self.assertIn("Open is an exception tool", help_text)
+        self.assertIn("start ->", help_text)
+        self.assertIn("send -> read", help_text)
+
+    def test_relay_help_marks_relay_as_preferred_over_tell_for_agents(self):
+        parser = ccm.build_parser()
+        relay_parser = parser._subparsers._group_actions[0].choices["relay"]
+        help_text = relay_parser.format_help()
+
+        self.assertIn("Prefer 'relay' over 'tell'", help_text)
+        self.assertIn("reply hint", help_text)
+        self.assertIn("no receipt convention", help_text)
+
+
 class CommandBuildTests(unittest.TestCase):
-    def test_build_claude_command_uses_interactive_mode(self):
+    @mock.patch("claude_coop_manager.resolve_claude_executable", autospec=True)
+    def test_build_claude_command_uses_interactive_mode(self, resolve_claude_executable):
+        resolve_claude_executable.return_value = "/Users/test/.cac/bin/claude"
         command = ccm.build_claude_command("frontend-helper")
 
-        self.assertEqual(command[:3], ["claude", "--dangerously-skip-permissions", "-n"])
+        self.assertEqual(
+            command[:3],
+            ["/Users/test/.cac/bin/claude", "--dangerously-skip-permissions", "-n"],
+        )
         self.assertNotIn("--print", command)
+
+    @mock.patch.dict("os.environ", {"CLAUDE_CONFIG_DIR": "/Users/test/.cac/envs/main/.claude"}, clear=False)
+    @mock.patch("claude_coop_manager.resolve_claude_executable", autospec=True)
+    def test_build_tmux_claude_command_pins_binary_and_config_root(self, resolve_claude_executable):
+        resolve_claude_executable.return_value = "/Users/test/.cac/bin/claude"
+
+        command = ccm.build_tmux_claude_command("frontend-helper")
+
+        self.assertIn("env", command)
+        self.assertIn("CLAUDE_CONFIG_DIR=/Users/test/.cac/envs/main/.claude", command)
+        self.assertIn("/Users/test/.cac/bin/claude", command)
+
+    def test_format_relay_message_includes_sender_identity_and_reply_hint(self):
+        sender = {
+            "title": "main",
+            "worktree": "/work/app",
+            "branch": "feat/demo",
+            "repo_root": "/work",
+            "helper": "frontend-helper",
+            "helper_tmux_session": "ccm-frontend-helper-1234",
+            "helper_transcript": "/tmp/demo.jsonl",
+        }
+
+        rendered = ccm.format_relay_message(
+            "Please review the current frontend.",
+            sender,
+            task="wizard refinement",
+            scene="untouched",
+            ports="5183/8013",
+        )
+
+        self.assertIn("[from: main", rendered)
+        self.assertIn("worktree: /work/app", rendered)
+        self.assertIn("branch: feat/demo", rendered)
+        self.assertIn("helper: frontend-helper", rendered)
+        self.assertIn("tmux: ccm-frontend-helper-1234", rendered)
+        self.assertIn('reply-via: ccm relay main "..."', rendered)
+        self.assertTrue(rendered.endswith("Please review the current frontend."))
 
 
 class LifecycleTests(unittest.TestCase):
+    @mock.patch("claude_coop_manager.build_tmux_claude_command", autospec=True)
     @mock.patch("claude_coop_manager.time.sleep", autospec=True)
     @mock.patch("claude_coop_manager.ensure_session_ready", autospec=True)
     @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
@@ -249,8 +375,10 @@ class LifecycleTests(unittest.TestCase):
         tmux_has_session,
         ensure_ready,
         _sleep,
+        build_tmux_claude_command,
     ):
         tmux_has_session.return_value = False
+        build_tmux_claude_command.return_value = "env CLAUDE_CONFIG_DIR=/Users/test/.cac/envs/main/.claude /Users/test/.cac/bin/claude --dangerously-skip-permissions -n frontend-helper"
         state = ccm.State()
 
         record = ccm.start_session(state, "frontend-helper", "/work/app")
@@ -259,7 +387,10 @@ class LifecycleTests(unittest.TestCase):
         command = run_command.call_args_list[0].args[0]
         self.assertEqual(command[:6], ["tmux", "new-session", "-d", "-s", record.tmux_session, "-c"])
         self.assertEqual(command[6], "/work/app")
-        self.assertIn("claude --dangerously-skip-permissions -n frontend-helper", command[7])
+        self.assertEqual(
+            command[7],
+            "env CLAUDE_CONFIG_DIR=/Users/test/.cac/envs/main/.claude /Users/test/.cac/bin/claude --dangerously-skip-permissions -n frontend-helper",
+        )
         self.assertIn("frontend-helper", state.sessions)
 
     @mock.patch("claude_coop_manager.time.sleep", autospec=True)
@@ -316,6 +447,83 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("[ccm:frontend-helper]", command)
         self.assertEqual(payload["title"], "[ccm:frontend-helper]")
 
+    @mock.patch("claude_coop_manager.workspace_identity", autospec=True)
+    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    def test_list_kitty_tabs_includes_workspace_identity(self, run_command, workspace_identity):
+        run_command.return_value = mock.Mock(
+            stdout=json.dumps(
+                [
+                    {
+                        "tabs": [
+                            {
+                                "title": "feat/main-thread-for-member",
+                                "windows": [
+                                    {
+                                        "id": 550,
+                                        "is_active": True,
+                                        "cwd": "/work/app",
+                                        "cmdline": ["/bin/zsh"],
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            )
+        )
+        workspace_identity.return_value = {
+            "worktree": "/work/app",
+            "repo_root": "/work",
+            "branch": "feat/demo",
+            "helper": "frontend-helper",
+            "helper_status": "running",
+            "helper_tmux_session": "ccm-frontend-helper-1234",
+            "helper_transcript": "/tmp/demo.jsonl",
+        }
+
+        tabs = ccm.list_kitty_tabs("unix:/tmp/mykitty")
+
+        self.assertEqual(len(tabs), 1)
+        self.assertEqual(tabs[0]["title"], "feat/main-thread-for-member")
+        self.assertEqual(tabs[0]["branch"], "feat/demo")
+        self.assertEqual(tabs[0]["helper"], "frontend-helper")
+        self.assertEqual(tabs[0]["helper_status"], "running")
+
+    @mock.patch("claude_coop_manager.send_message_to_kitty_tab", autospec=True)
+    @mock.patch("claude_coop_manager.resolve_current_sender_context", autospec=True)
+    def test_relay_message_to_kitty_tab_wraps_message_with_sender_context(
+        self,
+        resolve_current_sender_context,
+        send_message_to_kitty_tab,
+    ):
+        resolve_current_sender_context.return_value = {
+            "title": "main",
+            "worktree": "/work/app",
+            "repo_root": "/work",
+            "branch": "feat/demo",
+            "helper": "frontend-helper",
+            "helper_status": "running",
+            "helper_tmux_session": "ccm-frontend-helper-1234",
+            "helper_transcript": "/tmp/demo.jsonl",
+        }
+        send_message_to_kitty_tab.return_value = {"title": "target", "window_id": "550", "endpoint": "unix:/tmp/mykitty"}
+
+        payload = ccm.relay_message_to_kitty_tab(
+            "target",
+            "Please review this branch.",
+            "unix:/tmp/mykitty",
+            cwd="/work/app",
+            task="frontend refinement",
+            scene="untouched",
+            ports="5183/8013",
+        )
+
+        forwarded = send_message_to_kitty_tab.call_args.args[1]
+        self.assertIn("[from: main", forwarded)
+        self.assertIn("reply-via: ccm relay main \"...\"", forwarded)
+        self.assertIn("Please review this branch.", forwarded)
+        self.assertEqual(payload["title"], "target")
+
 
 class ReadWaitTests(unittest.TestCase):
     @mock.patch("claude_coop_manager.time.sleep", autospec=True)
@@ -347,9 +555,11 @@ class ReadWaitTests(unittest.TestCase):
 
 
 class DoctorTests(unittest.TestCase):
+    @mock.patch("claude_coop_manager.claude_version_from_binary", autospec=True)
     @mock.patch("claude_coop_manager.shutil.which", autospec=True)
-    def test_doctor_report_includes_binary_and_state_info(self, which):
-        which.side_effect = lambda name: f"/usr/bin/{name}"
+    def test_doctor_report_includes_binary_and_state_info(self, which, claude_version_from_binary):
+        which.side_effect = lambda name, path=None: f"/usr/bin/{name}"
+        claude_version_from_binary.return_value = "Claude Code v2.1.86"
         state = ccm.State(
             sessions={
                 "frontend-helper": ccm.SessionRecord(
@@ -369,6 +579,195 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue(report["binaries"]["tmux"])
         self.assertTrue(report["binaries"]["claude"])
         self.assertEqual(report["sessions"], ["frontend-helper"])
+
+
+class CleanupTests(unittest.TestCase):
+    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
+    def test_cleanup_removes_dead_sessions_only_by_default(self, tmux_has_session, run_command):
+        tmux_has_session.side_effect = lambda session: session == "ccm-live"
+        state = ccm.State(
+            sessions={
+                "live": ccm.SessionRecord("live", "ccm-live", "live", "/work/a", 0.0),
+                "dead": ccm.SessionRecord("dead", "ccm-dead", "dead", "/work/a", 0.0),
+            }
+        )
+
+        payload = ccm.cleanup_sessions(state, kill_live=False)
+
+        self.assertEqual(payload["removed_dead"], ["dead"])
+        self.assertEqual(payload["killed_live"], [])
+        self.assertEqual(sorted(state.sessions), ["live"])
+        run_command.assert_not_called()
+
+    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    @mock.patch("claude_coop_manager.tmux_has_session", autospec=True)
+    def test_cleanup_can_kill_live_sessions(self, tmux_has_session, run_command):
+        tmux_has_session.return_value = True
+        state = ccm.State(
+            sessions={
+                "live": ccm.SessionRecord("live", "ccm-live", "live", "/work/a", 0.0),
+            }
+        )
+
+        payload = ccm.cleanup_sessions(state, kill_live=True)
+
+        self.assertEqual(payload["removed_dead"], [])
+        self.assertEqual(payload["killed_live"], ["live"])
+        self.assertEqual(state.sessions, {})
+        run_command.assert_called_once_with(["tmux", "kill-session", "-t", "ccm-live"], check=False)
+
+
+class KittyMessagingTests(unittest.TestCase):
+    def test_kitty_window_worktree_prefers_env_pwd(self):
+        window = {
+            "cwd": "/work/stale",
+            "env": {"PWD": "/work/canonical"},
+        }
+
+        self.assertEqual(ccm.kitty_window_worktree(window), "/work/canonical")
+
+    @mock.patch("claude_coop_manager.workspace_identity", autospec=True)
+    @mock.patch("claude_coop_manager.require_binary", autospec=True)
+    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    def test_list_kitty_tabs_uses_active_window_per_tab(self, run_command, require_binary, workspace_identity):
+        run_command.return_value = mock.Mock(
+            stdout=json.dumps(
+                [
+                    {
+                        "tabs": [
+                            {
+                                "title": "Main",
+                                "windows": [
+                                    {
+                                        "id": 11,
+                                        "is_active": True,
+                                        "cwd": "/work/stale-main",
+                                        "env": {"PWD": "/work/main"},
+                                        "cmdline": ["codex"],
+                                    }
+                                ],
+                            },
+                            {
+                                "title": "Claude Helper",
+                                "windows": [
+                                    {"id": 20, "is_active": False, "cwd": "/old", "env": {"PWD": "/old"}, "cmdline": ["zsh"]},
+                                    {
+                                        "id": 21,
+                                        "is_active": True,
+                                        "cwd": "/work/stale-ui",
+                                        "env": {"PWD": "/work/ui"},
+                                        "cmdline": ["claude"],
+                                    },
+                                ],
+                            },
+                        ]
+                    }
+                ]
+            )
+        )
+        workspace_identity.side_effect = [
+            {
+                "worktree": "/work/main",
+                "repo_root": "/work",
+                "branch": "main",
+                "helper": "",
+                "helper_status": "",
+                "helper_tmux_session": "",
+                "helper_transcript": "",
+            },
+            {
+                "worktree": "/work/ui",
+                "repo_root": "/work",
+                "branch": "feat/ui",
+                "helper": "frontend-helper",
+                "helper_status": "running",
+                "helper_tmux_session": "ccm-frontend-helper-1234",
+                "helper_transcript": "/tmp/demo.jsonl",
+            },
+        ]
+
+        peers = ccm.list_kitty_tabs("unix:/tmp/mykitty")
+
+        self.assertEqual(
+            peers,
+            [
+                {
+                    "title": "Main",
+                    "window_id": "11",
+                    "cwd": "/work/main",
+                    "cmdline": "codex",
+                    "branch": "main",
+                    "repo_root": "/work",
+                    "helper": "",
+                    "helper_status": "",
+                    "helper_tmux_session": "",
+                    "helper_transcript": "",
+                },
+                {
+                    "title": "Claude Helper",
+                    "window_id": "21",
+                    "cwd": "/work/ui",
+                    "cmdline": "claude",
+                    "branch": "feat/ui",
+                    "repo_root": "/work",
+                    "helper": "frontend-helper",
+                    "helper_status": "running",
+                    "helper_tmux_session": "ccm-frontend-helper-1234",
+                    "helper_transcript": "/tmp/demo.jsonl",
+                },
+            ],
+        )
+
+    @mock.patch("claude_coop_manager.workspace_identity", autospec=True)
+    @mock.patch("claude_coop_manager.require_binary", autospec=True)
+    @mock.patch("claude_coop_manager.run_command", autospec=True)
+    def test_send_message_to_kitty_tab_injects_text_and_enter(self, run_command, require_binary, workspace_identity):
+        run_command.side_effect = [
+            mock.Mock(
+                stdout=json.dumps(
+                    [
+                        {
+                            "tabs": [
+                                {
+                                    "title": "scheduled-tasks",
+                                    "windows": [
+                                        {
+                                            "id": 31,
+                                            "is_active": True,
+                                            "cwd": "/work/tasks",
+                                            "cmdline": ["codex"],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                )
+            ),
+            mock.Mock(stdout=""),
+            mock.Mock(stdout=""),
+        ]
+        workspace_identity.return_value = {
+            "worktree": "/work/tasks",
+            "repo_root": "/work",
+            "branch": "scheduled-tasks",
+            "helper": "",
+            "helper_status": "",
+            "helper_tmux_session": "",
+            "helper_transcript": "",
+        }
+
+        payload = ccm.send_message_to_kitty_tab(
+            "scheduled-tasks",
+            "Please review the frontend.",
+            "unix:/tmp/mykitty",
+        )
+
+        self.assertEqual(payload["title"], "scheduled-tasks")
+        self.assertEqual(payload["window_id"], "31")
+        self.assertEqual(run_command.call_args_list[1].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-text"])
+        self.assertEqual(run_command.call_args_list[2].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-key"])
 
 
 if __name__ == "__main__":
