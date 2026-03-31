@@ -736,20 +736,39 @@ class WeChatPeerTests(unittest.TestCase):
         tmux_send_enter,
         send_message_to_kitty_window,
     ):
-        resolve_sender_target.return_value = ccm.WeChatTargetRecord(
-            target="kitty:mycel",
-            kind="kitty",
-            title="mycel",
-            window_id="536",
-            worktree="/work/main",
-            repo_root="/work/main",
-            branch="main",
-            tmux_session="",
-            agent="",
-            agent_status="",
-            agent_transcript="",
-            runtime="codex",
-        )
+        def sender_side_effect(*, cwd, listen_on, explicit_target=""):
+            target = explicit_target or "kitty:mycel"
+            if target == "kitty:scheduled-tasks":
+                return ccm.WeChatTargetRecord(
+                    target="kitty:scheduled-tasks",
+                    kind="kitty",
+                    title="scheduled-tasks",
+                    window_id="498",
+                    worktree="/work/scheduled",
+                    repo_root="/work/scheduled",
+                    branch="feat/scheduled-task-improvements",
+                    tmux_session="",
+                    agent="",
+                    agent_status="",
+                    agent_transcript="",
+                    runtime="codex",
+                )
+            return ccm.WeChatTargetRecord(
+                target="kitty:mycel",
+                kind="kitty",
+                title="mycel",
+                window_id="536",
+                worktree="/work/main",
+                repo_root="/work/main",
+                branch="main",
+                tmux_session="",
+                agent="",
+                agent_status="",
+                agent_transcript="",
+                runtime="codex",
+            )
+
+        resolve_sender_target.side_effect = sender_side_effect
         resolve_target_spec.return_value = ccm.WeChatTargetRecord(
             target="tmux:ccm-frontend-agent-abcd1234",
             kind="tmux",
@@ -847,6 +866,108 @@ class WeChatPeerTests(unittest.TestCase):
         wechat_reply.assert_called_once()
         self.assertEqual(wechat_reply.call_args.kwargs["user_id"], "alice@im.wechat")
         self.assertIn("tmux:ccm-frontend-agent-abcd1234", wechat_reply.call_args.kwargs["text"])
+
+    @mock.patch("ccm_orchestra.cli.send_message_to_kitty_window", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_sender_target", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_target_spec", autospec=True)
+    @mock.patch("ccm_orchestra.cli.wechat_reply", autospec=True)
+    def test_wechat_shift_defaults_sender_to_phone_owner_when_no_from_target_is_provided(
+        self,
+        wechat_reply,
+        resolve_target_spec,
+        resolve_sender_target,
+        send_message_to_kitty_window,
+    ):
+        def sender_side_effect(*, cwd, listen_on, explicit_target=""):
+            if explicit_target == "kitty:scheduled-tasks":
+                return ccm.WeChatTargetRecord(
+                    target="kitty:scheduled-tasks",
+                    kind="kitty",
+                    title="scheduled-tasks",
+                    window_id="498",
+                    worktree="/work/scheduled",
+                    repo_root="/work/scheduled",
+                    branch="feat/scheduled-task-improvements",
+                    tmux_session="",
+                    agent="",
+                    agent_status="",
+                    agent_transcript="",
+                    runtime="codex",
+                )
+            return ccm.WeChatTargetRecord(
+                target="kitty:mycel",
+                kind="kitty",
+                title="mycel",
+                window_id="536",
+                worktree="/work/main",
+                repo_root="/work/main",
+                branch="main",
+                tmux_session="",
+                agent="",
+                agent_status="",
+                agent_transcript="",
+                runtime="codex",
+            )
+
+        resolve_sender_target.side_effect = sender_side_effect
+        transport = ccm.WeChatTransportState(
+            token="bot-token",
+            user_id="alice@im.wechat",
+            context_tokens={"alice@im.wechat": "ctx-1"},
+            bound_target="kitty:scheduled-tasks",
+        )
+
+        def target_side_effect(spec, listen_on=None, cwd=None):
+            mapping = {
+                "kitty:scheduled-tasks": ccm.WeChatTargetRecord(
+                    target="kitty:scheduled-tasks",
+                    kind="kitty",
+                    title="scheduled-tasks",
+                    window_id="498",
+                    worktree="/work/scheduled",
+                    repo_root="/work/scheduled",
+                    branch="feat/scheduled-task-improvements",
+                    tmux_session="",
+                    agent="",
+                    agent_status="",
+                    agent_transcript="",
+                    runtime="codex",
+                ),
+                "kitty:mycel": ccm.WeChatTargetRecord(
+                    target="kitty:mycel",
+                    kind="kitty",
+                    title="mycel",
+                    window_id="536",
+                    worktree="/work/main",
+                    repo_root="/work/main",
+                    branch="main",
+                    tmux_session="",
+                    agent="",
+                    agent_status="",
+                    agent_transcript="",
+                    runtime="codex",
+                ),
+            }
+            return mapping[spec]
+
+        resolve_target_spec.side_effect = target_side_effect
+        send_message_to_kitty_window.return_value = {"window_id": "536", "endpoint": "unix:/tmp/mykitty"}
+        wechat_reply.return_value = {"ok": True, "user_id": "alice@im.wechat"}
+
+        payload = ccm.wechat_send_to_peer(
+            target="kitty:mycel",
+            message="Return control to mycel.",
+            listen_on="unix:/tmp/mykitty",
+            cwd="/work/main",
+            mode="shift",
+            transport=transport,
+        )
+
+        self.assertEqual(payload["from_target"], "kitty:scheduled-tasks")
+        self.assertEqual(transport.bound_target, "kitty:mycel")
+        self.assertEqual(payload["phone_handoff"], "true")
+        self.assertEqual(resolve_sender_target.call_args.kwargs["explicit_target"], "kitty:scheduled-tasks")
+        wechat_reply.assert_called_once()
 
     @mock.patch("ccm_orchestra.cli.send_message_to_kitty_window", autospec=True)
     @mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True)
@@ -1777,6 +1898,39 @@ class ReadWaitTests(unittest.TestCase):
         events = ccm.read_updates(state, "frontend-agent", wait_seconds=0, poll_interval=1, raw=True)
 
         self.assertEqual(events, [raw_event])
+
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.read_incremental_jsonl", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_transcript", autospec=True)
+    def test_read_updates_raw_waits_for_late_events(self, resolve_transcript, read_incremental_jsonl, _sleep):
+        transcript = Path("/tmp/transcript.jsonl")
+        resolve_transcript.return_value = transcript
+        raw_event = {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "ready"}],
+            },
+        }
+        read_incremental_jsonl.side_effect = [
+            ([], 0, ""),
+            ([raw_event], 10, ""),
+        ]
+        state = ccm.State(
+            sessions={
+                "frontend-agent": ccm.SessionRecord(
+                    name="frontend-agent",
+                    tmux_session="ccm-frontend-agent",
+                    display_name="frontend-agent",
+                    cwd="/work/app",
+                    started_at=0.0,
+                )
+            }
+        )
+
+        events = ccm.read_updates(state, "frontend-agent", wait_seconds=3, poll_interval=1, raw=True)
+
+        self.assertEqual(events, [raw_event])
+        self.assertEqual(read_incremental_jsonl.call_count, 2)
 
 
 class DoctorTests(unittest.TestCase):

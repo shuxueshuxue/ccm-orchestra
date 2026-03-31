@@ -76,6 +76,41 @@ class SmokeCheckTests(unittest.TestCase):
         self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
 
     @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
+    def test_run_smoke_does_not_treat_user_prompt_token_as_success(self, run_cli):
+        token = "EXPECTED_TOKEN"
+        run_cli.side_effect = [
+            completed(stdout=json.dumps({"ok": True})),
+            completed(stdout=json.dumps({"running": True})),
+            completed(stdout=json.dumps({"name": "smoke-agent", "status": "running"})),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "running"}])),
+            completed(stdout=json.dumps({"name": "smoke-agent", "transcript": "/tmp/demo.jsonl"})),
+            completed(
+                stdout=json.dumps(
+                    [
+                        {
+                            "type": "user",
+                            "message": {
+                                "role": "user",
+                                "content": f"Reply with exactly {token} and nothing else.",
+                            },
+                        }
+                    ]
+                )
+            ),
+            completed(stdout=json.dumps([])),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "killed"}])),
+            completed(stdout=json.dumps({"removed_dead": [], "killed_live": []})),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "probe token"):
+            smoke.run_smoke(
+                cwd="/work/demo",
+                agent_name="smoke-agent",
+                read_wait_seconds=2.0,
+                probe_token=token,
+            )
+
+    @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
     def test_run_smoke_surfaces_rate_limit_events_clearly(self, run_cli):
         run_cli.side_effect = [
             completed(stdout=json.dumps({"ok": True})),
@@ -108,6 +143,46 @@ class SmokeCheckTests(unittest.TestCase):
 
         self.assertEqual(run_cli.call_args_list[-2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "kill", "smoke-agent"])
         self.assertEqual(run_cli.call_args_list[-1].args[0], ["ccm", "--json", "--cwd", "/work/demo", "cleanup"])
+
+    @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
+    def test_run_smoke_keeps_polling_raw_reads_until_assistant_event_arrives(self, run_cli):
+        token = "EXPECTED_TOKEN"
+        run_cli.side_effect = [
+            completed(stdout=json.dumps({"ok": True})),
+            completed(stdout=json.dumps({"running": True})),
+            completed(stdout=json.dumps({"name": "smoke-agent", "status": "running"})),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "running"}])),
+            completed(stdout=json.dumps({"name": "smoke-agent", "transcript": "/tmp/demo.jsonl"})),
+            completed(
+                stdout=json.dumps(
+                    [
+                        {"type": "custom-title", "customTitle": "smoke-agent"},
+                        {
+                            "type": "user",
+                            "message": {
+                                "role": "user",
+                                "content": f"Reply with exactly {token} and nothing else.",
+                            },
+                        },
+                    ]
+                )
+            ),
+            completed(stdout=json.dumps([{"kind": "assistant", "text": token}])),
+            completed(stdout=json.dumps([{"name": "smoke-agent", "status": "killed"}])),
+            completed(stdout=json.dumps({"removed_dead": [], "killed_live": []})),
+        ]
+
+        payload = smoke.run_smoke(
+            cwd="/work/demo",
+            agent_name="smoke-agent",
+            read_wait_seconds=12.0,
+            probe_token=token,
+        )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["events"][-1]["text"], token)
+        read_calls = [call.args[0] for call in run_cli.call_args_list if call.args[0][3:5] == ["/work/demo", "read"]]
+        self.assertGreaterEqual(len(read_calls), 2)
 
     @mock.patch("ccm_orchestra.smoke.run_cli", autospec=True)
     def test_heartbeat_status_treats_not_running_as_valid_observation(self, run_cli):

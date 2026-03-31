@@ -957,7 +957,10 @@ def read_updates(
         record.transcript_buffer = next_buffer
 
         if raw:
-            return events
+            if events or time.time() >= deadline:
+                return events
+            time.sleep(poll_interval)
+            continue
 
         rendered = []
         for event in events:
@@ -1990,10 +1993,13 @@ def wechat_send_to_peer(
     from_target: str = "",
     transport: WeChatTransportState | None = None,
 ) -> dict[str, str]:
+    sender_target = from_target
+    if mode == "shift" and not sender_target and transport is not None and transport.bound_target:
+        sender_target = transport.bound_target
     sender = resolve_sender_target(
         cwd=cwd,
         listen_on=listen_on,
-        explicit_target=from_target,
+        explicit_target=sender_target,
     )
     target_record = resolve_target_spec(target, listen_on=listen_on, cwd=cwd)
     phone_handoff = False

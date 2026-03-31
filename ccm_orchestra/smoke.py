@@ -50,20 +50,82 @@ def smoke_prompt(token: str) -> str:
     return f"Reply with exactly {token} and nothing else."
 
 
-def events_include_token(events: list[dict[str, Any]], token: str) -> bool:
+def assistant_event_texts(events: list[dict[str, Any]]) -> list[str]:
+    texts: list[str] = []
     for event in events:
-        if token in json.dumps(event, ensure_ascii=False):
-            return True
-    return False
+        if not isinstance(event, dict):
+            continue
+        if event.get("kind") == "assistant" and isinstance(event.get("text"), str):
+            texts.append(event["text"])
+            continue
+        if event.get("type") != "assistant":
+            continue
+        message = event.get("message", {})
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content", [])
+        if isinstance(content, str):
+            texts.append(content)
+            continue
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+                texts.append(block["text"])
+    return texts
+
+
+def events_include_token(events: list[dict[str, Any]], token: str) -> bool:
+    return any(token in text for text in assistant_event_texts(events))
 
 
 def first_terminal_failure(events: list[dict[str, Any]]) -> str:
     for event in events:
+        if not isinstance(event, dict):
+            continue
         if event.get("error") == "rate_limit":
             return "Claude usage limit blocked the smoke agent before it could echo the probe token."
         if event.get("error"):
             return f"Smoke agent returned terminal error: {event.get('error')}"
     return ""
+
+
+def read_probe_events(
+    *,
+    cwd: str,
+    agent_name: str,
+    total_wait_seconds: float,
+    poll_interval: float = 1.0,
+) -> list[dict[str, Any]]:
+    remaining_wait = max(total_wait_seconds, 0.0)
+    events: list[dict[str, Any]] = []
+
+    while True:
+        chunk_wait = min(poll_interval, remaining_wait)
+        chunk = parse_json_output(
+            run_cli(
+                [
+                    "ccm",
+                    "--json",
+                    "--cwd",
+                    cwd,
+                    "read",
+                    agent_name,
+                    "--wait-seconds",
+                    str(chunk_wait),
+                    "--raw",
+                ]
+            )
+        )
+        events.extend(chunk)
+        remaining_wait = max(0.0, remaining_wait - chunk_wait)
+
+        if assistant_event_texts(events):
+            return events
+        if first_terminal_failure(events):
+            return events
+        if remaining_wait <= 0.0:
+            return events
 
 
 def run_smoke(
@@ -82,20 +144,10 @@ def run_smoke(
         send = parse_json_output(
             run_cli(["ccm", "--json", "--cwd", cwd, "send", agent_name, smoke_prompt(probe_token)])
         )
-        events = parse_json_output(
-            run_cli(
-                [
-                    "ccm",
-                    "--json",
-                    "--cwd",
-                    cwd,
-                    "read",
-                    agent_name,
-                    "--wait-seconds",
-                    str(read_wait_seconds),
-                    "--raw",
-                ]
-            )
+        events = read_probe_events(
+            cwd=cwd,
+            agent_name=agent_name,
+            total_wait_seconds=read_wait_seconds,
         )
         terminal_failure = first_terminal_failure(events)
         if terminal_failure:
