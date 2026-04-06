@@ -18,6 +18,12 @@ The wakeup model matters:
 
 If you need another agent to wake up and reply later, do not sit on `read` and hope. Use `relay`.
 
+Visible-tab communication rule:
+
+- `ccm relay` is the primary path for tab-to-tab chat.
+- `ccm tell` is a legacy raw path for rare fire-and-forget injection only.
+- raw tab text or pane tails are legacy debug-only evidence, not the normal collaboration path.
+
 ## Tooling
 
 - Claude session manager: `ccm`
