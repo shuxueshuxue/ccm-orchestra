@@ -486,8 +486,18 @@ class ParserHelpTests(unittest.TestCase):
         help_text = relay_parser.format_help()
 
         self.assertIn("Prefer 'relay' over 'tell'", help_text)
+        self.assertIn("primary path", help_text)
         self.assertIn("reply hint", help_text)
         self.assertIn("no receipt convention", help_text)
+
+    def test_tell_help_marks_tell_as_legacy_raw_path(self):
+        parser = ccm.build_parser()
+        tell_parser = parser._subparsers._group_actions[0].choices["tell"]
+        help_text = tell_parser.format_help()
+
+        self.assertIn("legacy", help_text)
+        self.assertIn("raw fire-and-forget", help_text)
+        self.assertIn("Prefer 'relay'", help_text)
 
     def test_wechat_shift_help_mentions_phone_notice(self):
         parser = ccm.build_parser()
@@ -537,6 +547,9 @@ class GuideOutputTests(unittest.TestCase):
         self.assertIn("long-lived", guide_text)
         self.assertIn("dedicated", guide_text)
         self.assertIn("relay", guide_text)
+        self.assertIn("primary", guide_text)
+        self.assertIn("legacy", guide_text)
+        self.assertIn("raw tab text", guide_text)
         self.assertIn("push", guide_text)
         self.assertIn("poll", guide_text)
         self.assertIn("doctor", guide_text)
@@ -1992,9 +2005,12 @@ class InspectTests(unittest.TestCase):
 
     def test_inspect_help_mentions_pane_tail_and_transcript_debug(self):
         parser = ccm.build_parser()
-        help_text = parser.format_help()
+        inspect_parser = parser._subparsers._group_actions[0].choices["inspect"]
+        help_text = inspect_parser.format_help()
 
-        self.assertIn("inspect", help_text)
+        self.assertIn("pane tail", help_text)
+        self.assertIn("legacy", help_text)
+        self.assertIn("debug", help_text)
 
 
 class CleanupTests(unittest.TestCase):

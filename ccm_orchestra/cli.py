@@ -2171,6 +2171,9 @@ def render_guide(audience: str) -> str:
         - `ccm relay` is push-based. It wakes another visible tab and gives it enough sender
           context to reply later.
         - Do not expect `read` to wake another agent tab for you.
+        - For visible-tab peer chat, `relay` is the primary path.
+        - Reading raw tab text or tmux pane tail is a legacy debug path, not a normal
+          collaboration path.
 
         Wechat-style peer layer:
         - Use direct targets such as `kitty:<tab-title>` and `tmux:<session-name>`.
@@ -2197,6 +2200,8 @@ def render_guide(audience: str) -> str:
         If `read` is empty or transcript resolution looks wrong:
         - run `ccm inspect frontend-agent --cwd "$PWD"`
         - look at the transcript search roots and pane tail before guessing
+        - treat pane tail as legacy debug evidence only; do not use raw tab text as the
+          normal way tabs talk to each other
 
         Heartbeat notes:
         - `codex-heartbeat start --tab-title mycel` keeps one named visible tab awake.
@@ -2212,6 +2217,11 @@ def render_guide(audience: str) -> str:
         - you are an agent inside kitty
         - you expect a useful reply or acknowledgment
         - the receiver needs sender identity, worktree, branch, agent, or scene context
+        - tab-to-tab chat should follow one primary path instead of falling back to raw text
+
+        Use `ccm tell` only when:
+        - you intentionally want a legacy raw fire-and-forget injection
+        - no sender envelope, reply hint, or receipt convention is needed
         """
     ).strip()
 
@@ -2228,7 +2238,8 @@ def build_parser() -> argparse.ArgumentParser:
             "not non-interactive print mode. Use 'open' only when the transcript is not "
             "enough: debugging a stuck agent, live observation, or deliberate visible-tab "
             "collaboration. For agents/LLMs, run 'ccm guide agent' for the longer operating "
-            "rules."
+            "rules. For visible-tab peer chat, use 'relay' as the primary path and treat raw "
+            "tab text/pane tail as legacy debug-only evidence."
         ),
     )
     parser.add_argument("--cwd", help="Select the session namespace directory; for start, also use it as the Claude cwd")
@@ -2263,7 +2274,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Inspect is the fallback when 'read' is empty or transcript resolution lags. "
             "It prints the session state path, tmux session, resolved transcript path, "
-            "transcript search roots, and a recent tmux pane tail."
+            "transcript search roots, and a recent tmux pane tail. Pane tail is legacy "
+            "debug evidence only, not the normal collaboration path between tabs."
         ),
     )
     inspect_parser.add_argument("name")
@@ -2326,7 +2338,15 @@ def build_parser() -> argparse.ArgumentParser:
     tabs_parser = subparsers.add_parser("tabs", help="kitty layer: list visible tabs and their resolved identity")
     tabs_parser.add_argument("--listen-on")
 
-    tell_parser = subparsers.add_parser("tell", help="kitty layer: send raw fire-and-forget text to a visible tab")
+    tell_parser = subparsers.add_parser(
+        "tell",
+        help="kitty layer: legacy raw fire-and-forget text to a visible tab",
+        description=(
+            "Tell is a legacy raw path. Prefer 'relay' for normal tab-to-tab chat, sender "
+            "context, and reply-friendly coordination. Use 'tell' only when you explicitly "
+            "want raw fire-and-forget text with no receipt convention."
+        ),
+    )
     tell_parser.add_argument("title")
     tell_parser.add_argument("message")
     tell_parser.add_argument("--listen-on")
@@ -2336,8 +2356,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="kitty layer: preferred for agents, send a message with sender context and reply hint",
         description=(
             "Prefer 'relay' over 'tell' when you are an agent inside kitty and expect a "
-            "useful reply. Relay wraps the message with sender identity and a reply hint. "
-            "Use 'tell' only for raw fire-and-forget text with no receipt convention."
+            "useful reply. Relay is the primary path for visible-tab peer chat. Relay wraps "
+            "the message with sender identity and a reply hint. Use 'tell' only for legacy "
+            "raw fire-and-forget text with no receipt convention."
         ),
     )
     relay_parser.add_argument("title")

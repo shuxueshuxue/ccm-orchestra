@@ -203,6 +203,12 @@ ccm relay "feat/main-thread-for-member" "Use Claude to review the UI and report 
 
 `ccm tabs` now shows the peer tab title together with its resolved worktree, git branch, and agent identity. `ccm relay` wraps the message with a default envelope and a `reply-via` hint so a newcomer can answer without learning extra ceremony.
 
+Visible-tab communication rule:
+
+- `ccm relay` is the primary path for tab-to-tab chat.
+- `ccm tell` is a legacy raw path for rare fire-and-forget text injection.
+- reading raw tab text or pane tails is legacy debug-only evidence, not the normal way agents should talk to each other.
+
 This is also the wakeup-safe path for agents in visible tabs:
 
 - use `ccm read` when waiting on Claude agent output from the `tmux` layer

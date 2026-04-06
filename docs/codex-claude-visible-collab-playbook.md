@@ -22,9 +22,11 @@ If you need another agent tab to wake up later, `relay` is the right primitive. 
 
 - `ccm`: manages interactive Claude Code sessions
 - `ccm tabs`: lists visible `kitty` tabs with resolved worktree, branch, and agent identity
-- `ccm tell`: low-level raw message injection into another visible `kitty` tab by title
-- `ccm relay`: collaboration-first messaging with sender envelope and `reply-via` hint
+- `ccm relay`: the primary path for visible-tab chat, with sender envelope and `reply-via` hint
+- `ccm tell`: legacy low-level raw message injection into another visible `kitty` tab by title
 - `codex-heartbeat`: keeps the supervising `main` tab awake
+
+Treat reading raw tab text or pane tails as legacy debug-only evidence, not as the normal way visible tabs should talk to each other.
 
 ## Rules
 

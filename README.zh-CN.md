@@ -203,6 +203,12 @@ ccm relay "feat/main-thread-for-member" "Use Claude to review the UI and report 
 
 `ccm tabs` 现在会直接显示 peer 的 worktree、git branch 和 agent 身份。`ccm relay` 会自动包上一层默认 envelope 和 `reply-via` 提示，新人不需要自己记住上下文格式。
 
+visible tab 通信规则：
+
+- `ccm relay` 是 tab 之间聊天的主路径。
+- `ccm tell` 是 legacy 的原始文本注入路径，只留给极少数 fire-and-forget 场景。
+- 读取原始 tab 文本或 pane tail 只能算 legacy 的 debug 证据，不应作为 agent 正常对话方式。
+
 这也是 visible tab 里最安全的唤醒路径：
 
 - 等 `tmux` agent 输出时，用 `ccm read`

@@ -28,6 +28,12 @@ ccm tell "scheduled-tasks" "Please summarize your current frontend direction." -
 ccm open frontend-agent --listen-on "${KITTY_LISTEN_ON}" --cwd "$PWD"
 ```
 
+Visible-tab communication rule:
+
+- `ccm relay` is the primary path for tab-to-tab chat.
+- `ccm tell` is legacy raw injection only.
+- Reading raw tab text or pane tail is legacy debug-only evidence, not the normal collaboration path.
+
 ## Wechat-Style Peer Layer
 
 ```bash
@@ -81,7 +87,9 @@ codex-heartbeat test --tab-title mycel
 - If `ccm read` is empty or transcript resolution lags, run `ccm inspect <agent> --cwd "$PWD"` before guessing. It shows transcript search roots and recent pane tail.
 - Use `ccm read --raw --json` when you need unrendered transcript events for MCP/tool-trace debugging.
 - Use `ccm list --all-scopes --json` when the session you want may live in another saved namespace.
-- Prefer `ccm relay` over `ccm tell` when coordinating with another visible tab. `relay` auto-includes sender context and a reply hint.
+- Treat `ccm relay` as the primary path when coordinating with another visible tab. `relay` auto-includes sender context and a reply hint.
+- Treat `ccm tell` as legacy raw fire-and-forget injection only.
+- Treat raw tab text and pane tail as legacy debug evidence only. Tabs should normally talk through `relay`, not by reading each other's raw terminal output.
 - Remember the wakeup model: `ccm read` is poll-based tmux waiting; `ccm relay` is push-based kitty messaging. Polling Claude output will not wake another agent tab.
 - `codex-heartbeat start/status/stop/test` can all target a custom visible tab title with `--tab-title ...`. Use `test` for a one-shot push before you start a long-running heartbeat loop.
 - Use normal interactive Claude only. The main reason is to avoid drifting into non-interactive automation patterns that may be riskier for the account.
