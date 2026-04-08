@@ -448,6 +448,31 @@ class MainDispatchTests(unittest.TestCase):
         list_sessions_all_scopes.assert_called_once_with(ccm.DEFAULT_HOME_ROOT)
         emit.assert_called_once_with([{"name": "frontend-agent"}], as_json=True)
 
+    @mock.patch("ccm_orchestra.cli.load_heartbeat_module", autospec=True)
+    @mock.patch("ccm_orchestra.cli.load_state", autospec=True)
+    def test_main_heartbeat_delegates_to_heartbeat_module(self, load_state, load_heartbeat_module):
+        load_state.return_value = ccm.State()
+        heartbeat_module = mock.Mock()
+        heartbeat_module.main.return_value = 0
+        load_heartbeat_module.return_value = heartbeat_module
+
+        exit_code = ccm.main(["heartbeat", "test", "--tab-title", "mycel"])
+
+        self.assertEqual(exit_code, 0)
+        heartbeat_module.main.assert_called_once_with(["test", "--tab-title", "mycel"])
+
+    @mock.patch("ccm_orchestra.cli.importlib.import_module", autospec=True)
+    def test_load_heartbeat_module_falls_back_to_local_script_import(self, import_module):
+        local_module = mock.Mock()
+        package_error = ModuleNotFoundError("No module named 'ccm_orchestra'")
+        package_error.name = "ccm_orchestra"
+        import_module.side_effect = [package_error, local_module]
+
+        resolved = ccm.load_heartbeat_module()
+
+        self.assertIs(resolved, local_module)
+        import_module.assert_has_calls([mock.call("ccm_orchestra.heartbeat"), mock.call("heartbeat")])
+
 
 class ParserHelpTests(unittest.TestCase):
     def test_root_parser_uses_ccm_prog_name(self):
@@ -462,8 +487,9 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("Use 'open' only", help_text)
         self.assertIn("For agents/LLMs, run 'ccm guide agent'", help_text)
         self.assertIn("Mental model:", help_text)
-        self.assertIn("'codex-heartbeat' keeps", help_text)
-        self.assertIn("one visible tab awake", help_text)
+        self.assertIn("'ccm heartbeat' keeps", help_text)
+        self.assertIn("visible tab awake", help_text)
+        self.assertIn("`codex-heartbeat` remains", help_text)
         self.assertIn("'wechat-watch' is the phone watcher", help_text)
         self.assertIn("lowers rare submit misses", help_text)
 
@@ -495,6 +521,15 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("reply hint", help_text)
         self.assertIn("no receipt convention", help_text)
         self.assertIn("extra Enter retry", help_text)
+
+    def test_heartbeat_help_mentions_visible_tab_keepalive_alias(self):
+        parser = ccm.build_parser()
+        heartbeat_parser = parser._subparsers._group_actions[0].choices["heartbeat"]
+        help_text = heartbeat_parser.format_help()
+
+        self.assertIn("visible-tab", help_text)
+        self.assertIn("keepalive", help_text)
+        self.assertIn("codex-heartbeat", help_text)
 
     def test_tell_help_marks_tell_as_legacy_raw_path(self):
         parser = ccm.build_parser()
@@ -561,6 +596,7 @@ class GuideOutputTests(unittest.TestCase):
         self.assertIn("doctor", guide_text)
         self.assertIn("specific", guide_text)
         self.assertIn("current namespace", guide_text)
+        self.assertIn("ccm heartbeat", guide_text)
         self.assertIn("codex-heartbeat", guide_text)
         self.assertIn("reply-via", guide_text)
         self.assertIn("extra Enter retry", guide_text)
@@ -571,6 +607,7 @@ class GuideOutputTests(unittest.TestCase):
         self.assertIn("start -> send -> read", guide_text)
         self.assertIn("ccm guide agent", guide_text)
         self.assertIn("ccm relay", guide_text)
+        self.assertIn("ccm heartbeat", guide_text)
         self.assertIn("codex-heartbeat", guide_text)
         self.assertIn("extra Enter retry", guide_text)
 

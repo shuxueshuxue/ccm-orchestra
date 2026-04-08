@@ -79,8 +79,8 @@ pip install -e .
 
 ccm doctor
 ccm-smoke --cwd "$PWD"
-codex-heartbeat status
-codex-heartbeat test --tab-title mycel
+ccm heartbeat status
+ccm heartbeat test --tab-title mycel
 ```
 
 Prefer a venv. On many modern systems, system Python is protected by PEP 668, so `pip install -e .` against the global interpreter may be blocked or may mutate a Python you did not intend to touch.
@@ -121,7 +121,7 @@ If you want one command that exercises the basic live path end-to-end:
 ccm-smoke --cwd "$PWD"
 ```
 
-`ccm-smoke` runs a narrow live check: `doctor -> start -> list -> send -> read -> kill -> cleanup`, and also records the current `codex-heartbeat status`. It fails loudly if the agent path does not produce the probe token.
+`ccm-smoke` runs a narrow live check: `doctor -> start -> list -> send -> read -> kill -> cleanup`, and also records the current `ccm heartbeat status`. It fails loudly if the agent path does not produce the probe token.
 
 If `read` comes back empty or transcript resolution still looks suspicious, inspect the live session instead of guessing:
 
@@ -219,7 +219,8 @@ Shortest-path mental model:
 
 - `ccm read` polls unread transcript output from the tmux-managed agent
 - `ccm relay` pushes a message into another visible tab and gives it a reply path
-- `codex-heartbeat` is a separate visible-tab keepalive tool, not a `ccm` subcommand
+- `ccm heartbeat` is the main visible-tab keepalive entry point
+- `codex-heartbeat` remains the equivalent direct alias
 - visible Codex tabs get one extra Enter retry on relay delivery; this lowers submit misses, not mathematically guarantees them away
 - `ccm wechat-watch` is the phone transport watcher, not a general agent scheduler
 
@@ -304,13 +305,13 @@ ccm wechat-watch-stop
 ### Keep the supervising Codex tab alive
 
 ```bash
-codex-heartbeat start --tab-title mycel --interval-seconds 1500
-codex-heartbeat status --tab-title mycel
-codex-heartbeat test --tab-title mycel
-codex-heartbeat stop --tab-title mycel
+ccm heartbeat start --tab-title mycel --interval-seconds 1500
+ccm heartbeat status --tab-title mycel
+ccm heartbeat test --tab-title mycel
+ccm heartbeat stop --tab-title mycel
 ```
 
-`codex-heartbeat` is intentionally separate from `ccm`; it targets one visible tab by title and acts as a keepalive/wakeup helper.
+`ccm heartbeat ...` and `codex-heartbeat ...` are equivalent entry points. The tool still targets one visible tab by title and acts as a keepalive/wakeup helper.
 
 ## Architecture
 
@@ -320,7 +321,7 @@ codex-heartbeat stop --tab-title mycel
   Starts and reuses interactive Claude agents, isolates them by worktree, reads transcripts, and runs doctor checks.
 - `kitty` collaboration layer, also handled by `ccm_orchestra/cli.py`
   Lists visible tabs, injects messages, and supports reply-friendly relay envelopes between tabs.
-- `bin/codex-heartbeat`
+- `ccm heartbeat` / `bin/codex-heartbeat`
   Sends periodic heartbeat prompts into a target `kitty` tab so long-running supervision does not die quietly.
 
 The orchestration strategy is intentionally narrow:

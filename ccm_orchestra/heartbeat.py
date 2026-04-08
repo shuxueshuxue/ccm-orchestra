@@ -246,8 +246,8 @@ def test_once(endpoint: str, message: str, tab_title: str) -> int:
     return 0
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     if args.command == "start":
         return start_background(args.endpoint, args.interval_seconds, args.message, args.tab_title)
     if args.command == "run":

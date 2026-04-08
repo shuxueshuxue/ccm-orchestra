@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -2195,7 +2196,8 @@ def render_guide(audience: str) -> str:
             Wakeup shortcuts:
             - `ccm read` waits on tmux transcript output from the managed agent.
             - `ccm relay "peer-tab" "..." --cwd "$PWD"` wakes another visible tab and gives it a reply path.
-            - `codex-heartbeat` keeps one visible tab awake when you need long-running supervision.
+            - `ccm heartbeat start --tab-title mycel` keeps one visible tab awake when you need long-running supervision.
+            - `codex-heartbeat ...` remains the equivalent direct alias when you want the shorter binary.
             - Visible Codex tabs get one extra Enter retry on relay delivery; this lowers submit misses,
               not mathematically guarantees them away.
 
@@ -2270,9 +2272,10 @@ def render_guide(audience: str) -> str:
           normal way tabs talk to each other
 
         Heartbeat notes:
-        - `codex-heartbeat start --tab-title mycel` keeps one named visible tab awake.
-        - `codex-heartbeat test --tab-title mycel` is the one-shot push check when you
+        - `ccm heartbeat start --tab-title mycel` keeps one named visible tab awake.
+        - `ccm heartbeat test --tab-title mycel` is the one-shot push check when you
           want to verify the kitty push path without starting a background loop.
+        - `codex-heartbeat ...` remains the equivalent direct alias when you want the shorter binary.
 
         Use `ccm open` only when:
         - the agent looks stuck and transcript output is not enough
@@ -2296,6 +2299,17 @@ def render_guide(audience: str) -> str:
     ).strip()
 
 
+def load_heartbeat_module() -> Any:
+    # @@@heartbeat-import - Installed `ccm` can be executed as a bare script from the
+    # package directory, where `ccm_orchestra.heartbeat` is not importable by package name.
+    try:
+        return importlib.import_module("ccm_orchestra.heartbeat")
+    except ModuleNotFoundError as exc:
+        if exc.name != "ccm_orchestra":
+            raise
+        return importlib.import_module("heartbeat")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ccm",
@@ -2310,10 +2324,10 @@ def build_parser() -> argparse.ArgumentParser:
             "collaboration. For agents/LLMs, run 'ccm guide agent' for the longer operating "
             "rules. For visible-tab peer chat, use 'relay' as the primary path and treat raw "
             "tab text/pane tail as legacy debug-only evidence. Mental model: 'read' polls tmux "
-            "transcripts, 'relay' wakes visible tabs, 'codex-heartbeat' keeps one visible tab "
+            "transcripts, 'relay' wakes visible tabs, 'ccm heartbeat' keeps one visible tab "
             "awake, and 'wechat-watch' is the phone watcher. Visible Codex relay delivery uses "
             "one extra Enter retry, which lowers rare submit misses without mathematically "
-            "guaranteeing them away."
+            "guaranteeing them away. `codex-heartbeat` remains as the equivalent direct alias."
         ),
     )
     parser.add_argument("--cwd", help="Select the session namespace directory; for start, also use it as the Claude cwd")
@@ -2442,6 +2456,21 @@ def build_parser() -> argparse.ArgumentParser:
     relay_parser.add_argument("--task", default="")
     relay_parser.add_argument("--scene", default="")
     relay_parser.add_argument("--ports", default="")
+
+    heartbeat_parser = subparsers.add_parser(
+        "heartbeat",
+        help="kitty layer: visible-tab keepalive alias for codex-heartbeat",
+        description=(
+            "Heartbeat is the `ccm` entry-point alias for `codex-heartbeat`. Use it as the "
+            "visible-tab keepalive path when you want one named tab to stay awake without "
+            "changing heartbeat behavior or transport."
+        ),
+    )
+    heartbeat_parser.add_argument(
+        "heartbeat_argv",
+        nargs=argparse.REMAINDER,
+        help="Arguments forwarded to codex-heartbeat, such as `start --tab-title mycel`.",
+    )
 
     subparsers.add_parser(
         "wechat-status",
@@ -2695,6 +2724,9 @@ def main(argv: list[str] | None = None) -> int:
                 as_json=args.json,
             )
             return 0
+
+        if args.command == "heartbeat":
+            return load_heartbeat_module().main(args.heartbeat_argv)
 
         if args.command == "wechat-status":
             emit(wechat_status_payload(wechat_transport), as_json=args.json)

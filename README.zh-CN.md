@@ -79,8 +79,8 @@ pip install -e .
 
 ccm doctor
 ccm-smoke --cwd "$PWD"
-codex-heartbeat status
-codex-heartbeat test --tab-title mycel
+ccm heartbeat status
+ccm heartbeat test --tab-title mycel
 ```
 
 优先使用 venv。现在很多系统的系统 Python 会受 PEP 668 保护，所以直接对全局解释器执行 `pip install -e .` 可能会被拒绝，或者把包装到你根本不想动的 Python 里。
@@ -121,7 +121,7 @@ ccm cleanup --cwd "$PWD"
 ccm-smoke --cwd "$PWD"
 ```
 
-`ccm-smoke` 会按很窄的顺序跑一遍：`doctor -> start -> list -> send -> read -> kill -> cleanup`，同时记录当前的 `codex-heartbeat status`。如果 agent 没有读回预期的 probe token，它会直接失败，不会掩盖问题。
+`ccm-smoke` 会按很窄的顺序跑一遍：`doctor -> start -> list -> send -> read -> kill -> cleanup`，同时记录当前的 `ccm heartbeat status`。如果 agent 没有读回预期的 probe token，它会直接失败，不会掩盖问题。
 
 如果 `read` 结果是空的，或者 transcript 解析看起来不对，不要靠猜，直接看 live 现场：
 
@@ -219,7 +219,8 @@ visible tab 通信规则：
 
 - `ccm read` 轮询 tmux 托管 agent 的 transcript unread 输出
 - `ccm relay` 主动把消息推到另一个可见 tab，并附上 reply 路径
-- `codex-heartbeat` 是单独的可见 tab keepalive 工具，不是 `ccm` 子命令
+- `ccm heartbeat` 是主要的可见 tab keepalive 入口
+- `codex-heartbeat` 仍然保留为等价的直达别名
 - 对可见 Codex tab，relay delivery 现在会额外补一次 Enter；这只是在降低 submit miss 概率，不是数学保证
 - `ccm wechat-watch` 是手机消息 transport watcher，不是通用 agent scheduler
 
@@ -304,13 +305,13 @@ ccm wechat-watch-stop
 ### 保持监督用的 Codex tab 存活
 
 ```bash
-codex-heartbeat start --tab-title mycel --interval-seconds 1500
-codex-heartbeat status --tab-title mycel
-codex-heartbeat test --tab-title mycel
-codex-heartbeat stop --tab-title mycel
+ccm heartbeat start --tab-title mycel --interval-seconds 1500
+ccm heartbeat status --tab-title mycel
+ccm heartbeat test --tab-title mycel
+ccm heartbeat stop --tab-title mycel
 ```
 
-`codex-heartbeat` 故意独立于 `ccm` 主命令；它按 tab title 定向，只负责 keepalive / wakeup 这一个小职责。
+`ccm heartbeat ...` 和 `codex-heartbeat ...` 是等价入口。它仍然按 tab title 定向，只负责 keepalive / wakeup 这一个小职责。
 
 ## 架构
 
@@ -320,7 +321,7 @@ codex-heartbeat stop --tab-title mycel
   启动和复用交互式 Claude agent，按 worktree 隔离，读取 transcript，并运行 doctor 自检。
 - `kitty` 协作层，也由 `ccm_orchestra/cli.py` 负责
   列出可见 tab、注入消息，并支持带 reply hint 的 relay 通信。
-- `bin/codex-heartbeat`
+- `ccm heartbeat` / `bin/codex-heartbeat`
   定时向指定 `kitty` tab 注入心跳消息，避免长时间监督时主 Codex 静默掉线。
 
 设计原则非常克制：
