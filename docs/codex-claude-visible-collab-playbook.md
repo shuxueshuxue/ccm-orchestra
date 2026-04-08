@@ -25,6 +25,10 @@ If you need another agent tab to wake up later, `relay` is the right primitive. 
 - `ccm relay`: the primary path for visible-tab chat, with sender envelope and `reply-via` hint
 - `ccm tell`: legacy low-level raw message injection into another visible `kitty` tab by title
 - `codex-heartbeat`: keeps the supervising `main` tab awake
+- `ccm guide human`: the shortest operator entry for the tmux vs kitty split and wakeup shortcuts
+- `ccm guide agent`: the longer operator rules, including `reply-via` and the minimal reply-back loop
+
+Visible Codex tabs now get one extra Enter retry on relay delivery. Treat that as probability reduction for rare submit misses, not a mathematical guarantee.
 
 Treat reading raw tab text or pane tails as legacy debug-only evidence, not as the normal way visible tabs should talk to each other.
 

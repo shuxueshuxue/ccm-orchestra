@@ -95,6 +95,7 @@ codex-heartbeat test --tab-title mycel
 2. 看是否出现 `@@@claude-path-mismatch` / `@@@claude-version-mismatch`。
 3. 重启 agent。已经在跑的 agent 会继续沿用自己启动时的 binary 和 config root。
 
+如果你是人类操作者，想先走最短入口，先跑 `ccm guide human`。
 如果你是 agent 或其他 LLM，不要直接即兴发挥，先跑 `ccm guide agent`。那里面有完整的操作规则、tmux/kitty 分层，以及唤醒模型说明。
 
 只有在你明确想绕开 cwd 推导出来的 namespace、直接操作某一个固定 state 文件时，才使用 `--state-path /abs/path/state.json`。这是排障/手术刀，不是日常路径。
@@ -214,6 +215,21 @@ visible tab 通信规则：
 - 等 `tmux` agent 输出时，用 `ccm read`
 - 需要另一个可见 tab 之后醒来并回复时，用 `ccm relay`
 
+最短心智模型：
+
+- `ccm read` 轮询 tmux 托管 agent 的 transcript unread 输出
+- `ccm relay` 主动把消息推到另一个可见 tab，并附上 reply 路径
+- `codex-heartbeat` 是单独的可见 tab keepalive 工具，不是 `ccm` 子命令
+- 对可见 Codex tab，relay delivery 现在会额外补一次 Enter；这只是在降低 submit miss 概率，不是数学保证
+- `ccm wechat-watch` 是手机消息 transport watcher，不是通用 agent scheduler
+
+最小 relay 往返示例：
+
+```bash
+ccm relay "code killer" "Please summarize your current blocker." --cwd "$PWD"
+ccm relay hub "Current blocker is relay discoverability." --cwd "/Users/lexicalmathical/worktrees/leonai--code-killer"
+```
+
 ### 用 wechat 风格的 peer 层做直接寻址
 
 统一只说一种寻址语言：
@@ -293,6 +309,8 @@ codex-heartbeat status --tab-title mycel
 codex-heartbeat test --tab-title mycel
 codex-heartbeat stop --tab-title mycel
 ```
+
+`codex-heartbeat` 故意独立于 `ccm` 主命令；它按 tab title 定向，只负责 keepalive / wakeup 这一个小职责。
 
 ## 架构
 

@@ -95,6 +95,7 @@ Use the global `ccm` only. If an agent starts failing after a Claude or `ccm` up
 2. Check for `@@@claude-path-mismatch` / `@@@claude-version-mismatch`.
 3. Restart the agent. Existing agents keep the binary and config root they started with.
 
+If you are a human operator and want the shortest entry path, run `ccm guide human`.
 If you are an agent or another LLM, run `ccm guide agent` before you improvise. That guide contains the longer operating rules, the tmux vs kitty split, and the wakeup model.
 
 Use `--state-path /abs/path/state.json` only when you intentionally want one explicit state file instead of the normal cwd-derived namespace. That is a debugging and surgery tool, not the everyday path.
@@ -214,6 +215,21 @@ This is also the wakeup-safe path for agents in visible tabs:
 - use `ccm read` when waiting on Claude agent output from the `tmux` layer
 - use `ccm relay` when another visible tab needs to wake up and reply
 
+Shortest-path mental model:
+
+- `ccm read` polls unread transcript output from the tmux-managed agent
+- `ccm relay` pushes a message into another visible tab and gives it a reply path
+- `codex-heartbeat` is a separate visible-tab keepalive tool, not a `ccm` subcommand
+- visible Codex tabs get one extra Enter retry on relay delivery; this lowers submit misses, not mathematically guarantees them away
+- `ccm wechat-watch` is the phone transport watcher, not a general agent scheduler
+
+Minimal relay round-trip:
+
+```bash
+ccm relay "code killer" "Please summarize your current blocker." --cwd "$PWD"
+ccm relay hub "Current blocker is relay discoverability." --cwd "/Users/lexicalmathical/worktrees/leonai--code-killer"
+```
+
 ### Use the wechat-style peer layer with direct targets
 
 Use one address language everywhere:
@@ -293,6 +309,8 @@ codex-heartbeat status --tab-title mycel
 codex-heartbeat test --tab-title mycel
 codex-heartbeat stop --tab-title mycel
 ```
+
+`codex-heartbeat` is intentionally separate from `ccm`; it targets one visible tab by title and acts as a keepalive/wakeup helper.
 
 ## Architecture
 

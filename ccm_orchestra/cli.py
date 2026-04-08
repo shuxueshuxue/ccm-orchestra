@@ -31,6 +31,7 @@ DEFAULT_CLAUDE_PROJECTS_ROOT = Path(
 READY_DELAY_SECONDS = 2.0
 DEFAULT_READY_TIMEOUT_SECONDS = 300.0
 TMUX_PASTE_SUBMIT_DELAY_SECONDS = 0.2
+CODEX_SUBMIT_RETRY_DELAY_SECONDS = 0.5
 READY_CONFIRMATION_PASSES = 2
 WECHAT_DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 WECHAT_BOT_TYPE = "3"
@@ -1084,6 +1085,70 @@ def list_kitty_tabs(listen_on: str | None) -> list[dict[str, str]]:
     return tabs
 
 
+def kitty_tab_runs_codex(tab: dict[str, str]) -> bool:
+    cmdline = tab.get("cmdline", "").strip()
+    if not cmdline:
+        return False
+    try:
+        argv = shlex.split(cmdline)
+    except ValueError:
+        argv = [cmdline]
+    return bool(argv) and Path(argv[0]).name == "codex"
+
+
+def kitty_window_cmdline(window_id: str, listen_on: str | None) -> str:
+    endpoint = resolve_kitty_endpoint(listen_on)
+    require_binary("kitty")
+    result = run_command(["kitty", "@", "--to", endpoint, "ls"])
+    data = json.loads(result.stdout or "[]")
+    for os_window in data:
+        for tab in os_window.get("tabs", []):
+            for window in tab.get("windows", []):
+                if str(window.get("id", "")) == str(window_id):
+                    return " ".join(window.get("cmdline", []))
+    return ""
+
+
+def submit_kitty_window(
+    endpoint: str,
+    window_id: str,
+    *,
+    codex_retry: bool,
+) -> None:
+    # @@@kitty-submit - visible delivery has one shared submit sequence so title-
+    # targeted relay and direct window delivery cannot drift on timing behavior.
+    time.sleep(TMUX_PASTE_SUBMIT_DELAY_SECONDS)
+    run_command(
+        [
+            "kitty",
+            "@",
+            "--to",
+            endpoint,
+            "send-key",
+            "--match",
+            f"id:{window_id}",
+            "enter",
+        ]
+    )
+    if codex_retry:
+        # @@@codex-submit-retry - kitty get-text does not expose Codex's live input
+        # buffer, so a rare missed Enter cannot be confirmed directly. Visible Codex
+        # peers therefore get one extra delayed Enter to narrow the submit race.
+        time.sleep(CODEX_SUBMIT_RETRY_DELAY_SECONDS)
+        run_command(
+            [
+                "kitty",
+                "@",
+                "--to",
+                endpoint,
+                "send-key",
+                "--match",
+                f"id:{window_id}",
+                "enter",
+            ]
+        )
+
+
 def send_message_to_kitty_tab(title: str, message: str, listen_on: str | None) -> dict[str, str]:
     endpoint = resolve_kitty_endpoint(listen_on)
     matches = [tab for tab in list_kitty_tabs(endpoint) if tab["title"] == title]
@@ -1105,23 +1170,18 @@ def send_message_to_kitty_tab(title: str, message: str, listen_on: str | None) -
             message,
         ]
     )
-    run_command(
-        [
-            "kitty",
-            "@",
-            "--to",
-            endpoint,
-            "send-key",
-            "--match",
-            f"id:{tab['window_id']}",
-            "enter",
-        ]
-    )
-    return {"title": tab["title"], "window_id": tab["window_id"], "endpoint": endpoint}
+    submit_kitty_window(endpoint, tab["window_id"], codex_retry=kitty_tab_runs_codex(tab))
+    return {
+        "title": tab["title"],
+        "window_id": tab["window_id"],
+        "endpoint": endpoint,
+        "agent_tmux_session": tab.get("agent_tmux_session", ""),
+    }
 
 
 def send_message_to_kitty_window(window_id: str, message: str, listen_on: str | None) -> dict[str, str]:
     endpoint = resolve_kitty_endpoint(listen_on)
+    cmdline = kitty_window_cmdline(window_id, endpoint)
     run_command(
         [
             "kitty",
@@ -1134,18 +1194,7 @@ def send_message_to_kitty_window(window_id: str, message: str, listen_on: str | 
             message,
         ]
     )
-    run_command(
-        [
-            "kitty",
-            "@",
-            "--to",
-            endpoint,
-            "send-key",
-            "--match",
-            f"id:{window_id}",
-            "enter",
-        ]
-    )
+    submit_kitty_window(endpoint, window_id, codex_retry=kitty_tab_runs_codex({"cmdline": cmdline}))
     return {"window_id": window_id, "endpoint": endpoint}
 
 
@@ -1233,6 +1282,12 @@ def relay_message_to_kitty_tab(
         ports=ports,
     )
     payload = send_message_to_kitty_tab(title, relay_message, listen_on)
+    target_tmux_session = payload.get("agent_tmux_session", "")
+    if target_tmux_session:
+        # @@@relay-submit - visible relay text can land before submit reaches the
+        # managed tmux agent, so tmux-backed peers get an explicit submit beat.
+        time.sleep(TMUX_PASTE_SUBMIT_DELAY_SECONDS)
+        tmux_send_enter(target_tmux_session)
     payload["from"] = sender["title"]
     payload["reply_via"] = f'ccm relay {shlex.quote(sender["title"])} "..."'
     return payload
@@ -2137,6 +2192,13 @@ def render_guide(audience: str) -> str:
             3. ccm send frontend-agent "..." --cwd "$PWD"
             4. ccm read frontend-agent --wait-seconds 30 --cwd "$PWD"
 
+            Wakeup shortcuts:
+            - `ccm read` waits on tmux transcript output from the managed agent.
+            - `ccm relay "peer-tab" "..." --cwd "$PWD"` wakes another visible tab and gives it a reply path.
+            - `codex-heartbeat` keeps one visible tab awake when you need long-running supervision.
+            - Visible Codex tabs get one extra Enter retry on relay delivery; this lowers submit misses,
+              not mathematically guarantees them away.
+
             Keep the agent alive when the tab will keep collaborating with it.
             Do not kill and recreate the agent after every small task unless you are
             explicitly resetting the scene.
@@ -2172,6 +2234,10 @@ def render_guide(audience: str) -> str:
           context to reply later.
         - Do not expect `read` to wake another agent tab for you.
         - For visible-tab peer chat, `relay` is the primary path.
+        - Relay envelopes include `reply-via`, so a newcomer can answer without inventing a
+          custom return path.
+        - Visible Codex tabs get one extra Enter retry on relay delivery; this lowers submit
+          misses, not mathematically guarantees them away.
         - Reading raw tab text or tmux pane tail is a legacy debug path, not a normal
           collaboration path.
 
@@ -2219,6 +2285,10 @@ def render_guide(audience: str) -> str:
         - the receiver needs sender identity, worktree, branch, agent, or scene context
         - tab-to-tab chat should follow one primary path instead of falling back to raw text
 
+        Minimal reply-back loop:
+        - `ccm relay "peer-tab" "Please summarize your blocker." --cwd "$PWD"`
+        - peer reads the `reply-via` hint and answers with `ccm relay <your-tab> "..."`.
+
         Use `ccm tell` only when:
         - you intentionally want a legacy raw fire-and-forget injection
         - no sender envelope, reply hint, or receipt convention is needed
@@ -2239,7 +2309,11 @@ def build_parser() -> argparse.ArgumentParser:
             "enough: debugging a stuck agent, live observation, or deliberate visible-tab "
             "collaboration. For agents/LLMs, run 'ccm guide agent' for the longer operating "
             "rules. For visible-tab peer chat, use 'relay' as the primary path and treat raw "
-            "tab text/pane tail as legacy debug-only evidence."
+            "tab text/pane tail as legacy debug-only evidence. Mental model: 'read' polls tmux "
+            "transcripts, 'relay' wakes visible tabs, 'codex-heartbeat' keeps one visible tab "
+            "awake, and 'wechat-watch' is the phone watcher. Visible Codex relay delivery uses "
+            "one extra Enter retry, which lowers rare submit misses without mathematically "
+            "guaranteeing them away."
         ),
     )
     parser.add_argument("--cwd", help="Select the session namespace directory; for start, also use it as the Claude cwd")
@@ -2357,8 +2431,9 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Prefer 'relay' over 'tell' when you are an agent inside kitty and expect a "
             "useful reply. Relay is the primary path for visible-tab peer chat. Relay wraps "
-            "the message with sender identity and a reply hint. Use 'tell' only for legacy "
-            "raw fire-and-forget text with no receipt convention."
+            "the message with sender identity and a reply hint. Visible Codex tabs also get "
+            "one extra Enter retry on relay delivery. Use 'tell' only for legacy raw "
+            "fire-and-forget text with no receipt convention."
         ),
     )
     relay_parser.add_argument("title")

@@ -461,6 +461,11 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("Daily loop: start -> send -> read.", help_text)
         self.assertIn("Use 'open' only", help_text)
         self.assertIn("For agents/LLMs, run 'ccm guide agent'", help_text)
+        self.assertIn("Mental model:", help_text)
+        self.assertIn("'codex-heartbeat' keeps", help_text)
+        self.assertIn("one visible tab awake", help_text)
+        self.assertIn("'wechat-watch' is the phone watcher", help_text)
+        self.assertIn("lowers rare submit misses", help_text)
 
     def test_open_help_marks_open_as_exception_tool(self):
         parser = ccm.build_parser()
@@ -489,6 +494,7 @@ class ParserHelpTests(unittest.TestCase):
         self.assertIn("primary path", help_text)
         self.assertIn("reply hint", help_text)
         self.assertIn("no receipt convention", help_text)
+        self.assertIn("extra Enter retry", help_text)
 
     def test_tell_help_marks_tell_as_legacy_raw_path(self):
         parser = ccm.build_parser()
@@ -555,12 +561,18 @@ class GuideOutputTests(unittest.TestCase):
         self.assertIn("doctor", guide_text)
         self.assertIn("specific", guide_text)
         self.assertIn("current namespace", guide_text)
+        self.assertIn("codex-heartbeat", guide_text)
+        self.assertIn("reply-via", guide_text)
+        self.assertIn("extra Enter retry", guide_text)
 
     def test_render_human_guide_points_to_agent_guide_when_needed(self):
         guide_text = ccm.render_guide("human")
 
         self.assertIn("start -> send -> read", guide_text)
         self.assertIn("ccm guide agent", guide_text)
+        self.assertIn("ccm relay", guide_text)
+        self.assertIn("codex-heartbeat", guide_text)
+        self.assertIn("extra Enter retry", guide_text)
 
 
 class WeChatPeerTests(unittest.TestCase):
@@ -1828,6 +1840,84 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("Please review this branch.", forwarded)
         self.assertEqual(payload["title"], "target")
 
+    @mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True)
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.send_message_to_kitty_tab", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_current_sender_context", autospec=True)
+    def test_relay_message_to_kitty_tab_submits_tmux_backed_visible_agent(
+        self,
+        resolve_current_sender_context,
+        send_message_to_kitty_tab,
+        time_sleep,
+        tmux_send_enter,
+    ):
+        resolve_current_sender_context.return_value = {
+            "title": "main",
+            "worktree": "/work/app",
+            "repo_root": "/work",
+            "branch": "feat/demo",
+            "agent": "frontend-agent",
+            "agent_status": "running",
+            "agent_tmux_session": "ccm-frontend-agent-1234",
+            "agent_transcript": "/tmp/demo.jsonl",
+        }
+        send_message_to_kitty_tab.return_value = {
+            "title": "target",
+            "window_id": "550",
+            "endpoint": "unix:/tmp/mykitty",
+            "agent_tmux_session": "ccm-target-agent-9999",
+        }
+
+        payload = ccm.relay_message_to_kitty_tab(
+            "target",
+            "Please review this branch.",
+            "unix:/tmp/mykitty",
+            cwd="/work/app",
+        )
+
+        time_sleep.assert_called_once_with(ccm.TMUX_PASTE_SUBMIT_DELAY_SECONDS)
+        tmux_send_enter.assert_called_once_with("ccm-target-agent-9999")
+        self.assertEqual(payload["title"], "target")
+
+    @mock.patch("ccm_orchestra.cli.tmux_send_enter", autospec=True)
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.send_message_to_kitty_tab", autospec=True)
+    @mock.patch("ccm_orchestra.cli.resolve_current_sender_context", autospec=True)
+    def test_relay_message_to_kitty_tab_does_not_submit_tmux_for_plain_visible_tab(
+        self,
+        resolve_current_sender_context,
+        send_message_to_kitty_tab,
+        time_sleep,
+        tmux_send_enter,
+    ):
+        resolve_current_sender_context.return_value = {
+            "title": "main",
+            "worktree": "/work/app",
+            "repo_root": "/work",
+            "branch": "feat/demo",
+            "agent": "frontend-agent",
+            "agent_status": "running",
+            "agent_tmux_session": "ccm-frontend-agent-1234",
+            "agent_transcript": "/tmp/demo.jsonl",
+        }
+        send_message_to_kitty_tab.return_value = {
+            "title": "target",
+            "window_id": "550",
+            "endpoint": "unix:/tmp/mykitty",
+            "agent_tmux_session": "",
+        }
+
+        payload = ccm.relay_message_to_kitty_tab(
+            "target",
+            "Please review this branch.",
+            "unix:/tmp/mykitty",
+            cwd="/work/app",
+        )
+
+        time_sleep.assert_not_called()
+        tmux_send_enter.assert_not_called()
+        self.assertEqual(payload["title"], "target")
+
 
 class ReadWaitTests(unittest.TestCase):
     @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
@@ -2059,6 +2149,77 @@ class KittyMessagingTests(unittest.TestCase):
 
         self.assertEqual(ccm.kitty_window_worktree(window), "/work/canonical")
 
+    def test_kitty_tab_runs_codex_accepts_bare_and_absolute_binary(self):
+        self.assertTrue(ccm.kitty_tab_runs_codex({"cmdline": "codex --dangerously-bypass-approvals-and-sandbox"}))
+        self.assertTrue(ccm.kitty_tab_runs_codex({"cmdline": "/opt/homebrew/bin/codex --dangerously-bypass-approvals-and-sandbox"}))
+        self.assertFalse(ccm.kitty_tab_runs_codex({"cmdline": "zsh -i"}))
+        self.assertFalse(ccm.kitty_tab_runs_codex({"cmdline": ""}))
+
+    @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
+    def test_kitty_window_cmdline_returns_matching_window_command(self, run_command, require_binary):
+        run_command.return_value = mock.Mock(
+            stdout=json.dumps(
+                [
+                    {
+                        "tabs": [
+                            {
+                                "title": "Main",
+                                "windows": [
+                                    {
+                                        "id": 11,
+                                        "is_active": True,
+                                        "cwd": "/work/main",
+                                        "cmdline": ["zsh"],
+                                    }
+                                ],
+                            },
+                            {
+                                "title": "relay-codex",
+                                "windows": [
+                                    {
+                                        "id": 31,
+                                        "is_active": True,
+                                        "cwd": "/work/tasks",
+                                        "cmdline": ["codex", "--dangerously-bypass-approvals-and-sandbox"],
+                                    }
+                                ],
+                            },
+                        ]
+                    }
+                ]
+            )
+        )
+
+        cmdline = ccm.kitty_window_cmdline("31", "unix:/tmp/mykitty")
+
+        self.assertEqual(cmdline, "codex --dangerously-bypass-approvals-and-sandbox")
+        run_command.assert_called_once_with(["kitty", "@", "--to", "unix:/tmp/mykitty", "ls"])
+
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
+    def test_submit_kitty_window_sends_single_enter_for_plain_window(self, run_command, time_sleep):
+        ccm.submit_kitty_window("unix:/tmp/mykitty", "31", codex_retry=False)
+
+        self.assertEqual(run_command.call_args_list[0].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-key"])
+        self.assertEqual(len(run_command.call_args_list), 1)
+        time_sleep.assert_called_once_with(ccm.TMUX_PASTE_SUBMIT_DELAY_SECONDS)
+
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
+    def test_submit_kitty_window_retries_enter_for_codex_window(self, run_command, time_sleep):
+        ccm.submit_kitty_window("unix:/tmp/mykitty", "31", codex_retry=True)
+
+        self.assertEqual(run_command.call_args_list[0].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-key"])
+        self.assertEqual(run_command.call_args_list[1].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-key"])
+        self.assertEqual(
+            time_sleep.call_args_list,
+            [
+                mock.call(ccm.TMUX_PASTE_SUBMIT_DELAY_SECONDS),
+                mock.call(ccm.CODEX_SUBMIT_RETRY_DELAY_SECONDS),
+            ],
+        )
+
     @mock.patch("ccm_orchestra.cli.workspace_identity", autospec=True)
     @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
     @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
@@ -2151,10 +2312,19 @@ class KittyMessagingTests(unittest.TestCase):
             ],
         )
 
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
     @mock.patch("ccm_orchestra.cli.workspace_identity", autospec=True)
     @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.submit_kitty_window", autospec=True)
     @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
-    def test_send_message_to_kitty_tab_injects_text_and_enter(self, run_command, require_binary, workspace_identity):
+    def test_send_message_to_kitty_tab_injects_text_and_enter(
+        self,
+        run_command,
+        submit_kitty_window,
+        require_binary,
+        workspace_identity,
+        time_sleep,
+    ):
         run_command.side_effect = [
             mock.Mock(
                 stdout=json.dumps(
@@ -2168,7 +2338,7 @@ class KittyMessagingTests(unittest.TestCase):
                                             "id": 31,
                                             "is_active": True,
                                             "cwd": "/work/tasks",
-                                            "cmdline": ["codex"],
+                                            "cmdline": ["zsh"],
                                         }
                                     ],
                                 }
@@ -2184,10 +2354,10 @@ class KittyMessagingTests(unittest.TestCase):
             "worktree": "/work/tasks",
             "repo_root": "/work",
             "branch": "scheduled-tasks",
-            "agent": "",
-            "agent_status": "",
-            "agent_tmux_session": "",
-            "agent_transcript": "",
+            "agent": "frontend-agent",
+            "agent_status": "running",
+            "agent_tmux_session": "ccm-frontend-agent-1234",
+            "agent_transcript": "/tmp/demo.jsonl",
         }
 
         payload = ccm.send_message_to_kitty_tab(
@@ -2198,8 +2368,169 @@ class KittyMessagingTests(unittest.TestCase):
 
         self.assertEqual(payload["title"], "scheduled-tasks")
         self.assertEqual(payload["window_id"], "31")
+        self.assertEqual(payload["agent_tmux_session"], "ccm-frontend-agent-1234")
         self.assertEqual(run_command.call_args_list[1].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-text"])
-        self.assertEqual(run_command.call_args_list[2].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-key"])
+        submit_kitty_window.assert_called_once_with("unix:/tmp/mykitty", "31", codex_retry=False)
+        time_sleep.assert_not_called()
+
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.workspace_identity", autospec=True)
+    @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.submit_kitty_window", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
+    def test_send_message_to_kitty_tab_retries_enter_for_codex_tabs(
+        self,
+        run_command,
+        submit_kitty_window,
+        require_binary,
+        workspace_identity,
+        time_sleep,
+    ):
+        run_command.side_effect = [
+            mock.Mock(
+                stdout=json.dumps(
+                    [
+                        {
+                            "tabs": [
+                                {
+                                    "title": "relay-codex-lab",
+                                    "windows": [
+                                        {
+                                            "id": 31,
+                                            "is_active": True,
+                                            "cwd": "/work/tasks",
+                                            "cmdline": ["codex", "--dangerously-bypass-approvals-and-sandbox"],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                )
+            ),
+            mock.Mock(stdout=""),
+            mock.Mock(stdout=""),
+            mock.Mock(stdout=""),
+        ]
+        workspace_identity.return_value = {
+            "worktree": "/work/tasks",
+            "repo_root": "/work",
+            "branch": "relay-codex-lab",
+            "agent": "",
+            "agent_status": "",
+            "agent_tmux_session": "",
+            "agent_transcript": "",
+        }
+
+        payload = ccm.send_message_to_kitty_tab(
+            "relay-codex-lab",
+            "Please review the frontend.",
+            "unix:/tmp/mykitty",
+        )
+
+        self.assertEqual(payload["title"], "relay-codex-lab")
+        self.assertEqual(run_command.call_args_list[1].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-text"])
+        submit_kitty_window.assert_called_once_with("unix:/tmp/mykitty", "31", codex_retry=True)
+        time_sleep.assert_not_called()
+
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.submit_kitty_window", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
+    def test_send_message_to_kitty_window_waits_a_beat_before_enter(
+        self,
+        run_command,
+        submit_kitty_window,
+        require_binary,
+        time_sleep,
+    ):
+        run_command.side_effect = [
+            mock.Mock(
+                stdout=json.dumps(
+                    [
+                        {
+                            "tabs": [
+                                {
+                                    "title": "plain-window",
+                                    "windows": [
+                                        {
+                                            "id": 31,
+                                            "is_active": True,
+                                            "cwd": "/work/tasks",
+                                            "env": {"PWD": "/work/tasks"},
+                                            "cmdline": ["zsh"],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                )
+            ),
+            mock.Mock(stdout=""),
+            mock.Mock(stdout=""),
+        ]
+
+        payload = ccm.send_message_to_kitty_window(
+            "31",
+            "Please review the frontend.",
+            "unix:/tmp/mykitty",
+        )
+
+        self.assertEqual(payload["window_id"], "31")
+        self.assertEqual(run_command.call_args_list[1].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-text"])
+        submit_kitty_window.assert_called_once_with("unix:/tmp/mykitty", "31", codex_retry=False)
+        time_sleep.assert_not_called()
+
+    @mock.patch("ccm_orchestra.cli.time.sleep", autospec=True)
+    @mock.patch("ccm_orchestra.cli.require_binary", autospec=True)
+    @mock.patch("ccm_orchestra.cli.submit_kitty_window", autospec=True)
+    @mock.patch("ccm_orchestra.cli.run_command", autospec=True)
+    def test_send_message_to_kitty_window_retries_enter_for_codex_windows(
+        self,
+        run_command,
+        submit_kitty_window,
+        require_binary,
+        time_sleep,
+    ):
+        run_command.side_effect = [
+            mock.Mock(
+                stdout=json.dumps(
+                    [
+                        {
+                            "tabs": [
+                                {
+                                    "title": "relay-codex-window",
+                                    "windows": [
+                                        {
+                                            "id": 31,
+                                            "is_active": True,
+                                            "cwd": "/work/tasks",
+                                            "env": {"PWD": "/work/tasks"},
+                                            "cmdline": ["codex", "--dangerously-bypass-approvals-and-sandbox"],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    ]
+                )
+            ),
+            mock.Mock(stdout=""),
+            mock.Mock(stdout=""),
+            mock.Mock(stdout=""),
+        ]
+
+        payload = ccm.send_message_to_kitty_window(
+            "31",
+            "Please review the frontend.",
+            "unix:/tmp/mykitty",
+        )
+
+        self.assertEqual(payload["window_id"], "31")
+        self.assertEqual(run_command.call_args_list[1].args[0][:5], ["kitty", "@", "--to", "unix:/tmp/mykitty", "send-text"])
+        submit_kitty_window.assert_called_once_with("unix:/tmp/mykitty", "31", codex_retry=True)
+        time_sleep.assert_not_called()
 
 
 if __name__ == "__main__":

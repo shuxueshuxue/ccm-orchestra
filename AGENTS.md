@@ -91,7 +91,11 @@ codex-heartbeat test --tab-title mycel
 - Treat `ccm tell` as legacy raw fire-and-forget injection only.
 - Treat raw tab text and pane tail as legacy debug evidence only. Tabs should normally talk through `relay`, not by reading each other's raw terminal output.
 - Remember the wakeup model: `ccm read` is poll-based tmux waiting; `ccm relay` is push-based kitty messaging. Polling Claude output will not wake another agent tab.
+- Visible Codex tabs now get one extra Enter retry on relay delivery. Treat that as probability reduction for submit misses, not a mathematical guarantee.
 - `codex-heartbeat start/status/stop/test` can all target a custom visible tab title with `--tab-title ...`. Use `test` for a one-shot push before you start a long-running heartbeat loop.
+- `codex-heartbeat` is a separate helper, not a `ccm` subcommand. Treat it as a visible-tab keepalive tool only.
+- `ccm wechat-watch` is the phone transport watcher. Do not treat it as a general scheduler for agent transcript polling.
+- Minimal reply-back loop: `ccm relay "<peer-tab>" "..." --cwd "$PWD"` and the peer replies with `ccm relay <your-tab> "..."`.
 - Use normal interactive Claude only. The main reason is to avoid drifting into non-interactive automation patterns that may be riskier for the account.
 - `open` is not part of the everyday loop. Use it only for debugging, live observation, or deliberate visible-tab collaboration.
 - If a session crashed or `kill` was interrupted, run `ccm cleanup --cwd "$PWD"`.
