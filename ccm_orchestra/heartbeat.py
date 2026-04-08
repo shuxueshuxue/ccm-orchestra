@@ -34,6 +34,10 @@ def heartbeat_log_path(tab_title: str) -> Path:
     return STATE_DIR / f"{slugify_tab_title(tab_title)}.log"
 
 
+def heartbeat_entrypoint_path() -> Path:
+    return Path(__file__).resolve()
+
+
 def build_parser(*, prog: str = "codex-heartbeat") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -138,6 +142,24 @@ def send_heartbeat(endpoint: str, message: str, tab_title: str) -> int:
     return window_id
 
 
+def wait_for_heartbeat_ready(
+    pid_path: Path,
+    *,
+    startup_pid: int,
+    timeout_seconds: float = 2.0,
+    poll_interval: float = 0.1,
+) -> int:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        child_pid = read_pid(pid_path)
+        if pid_is_alive(child_pid):
+            return child_pid
+        if not pid_is_alive(startup_pid):
+            raise RuntimeError("Heartbeat process exited before becoming ready.")
+        time.sleep(poll_interval)
+    raise RuntimeError("Heartbeat process did not become ready in time.")
+
+
 def run_loop(endpoint: str, interval_seconds: int, message: str, tab_title: str) -> int:
     pid_path = heartbeat_pid_path(tab_title)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -161,12 +183,11 @@ def start_background(endpoint: str, interval_seconds: int, message: str, tab_tit
 
     resolve_tab_window_id(endpoint, tab_title)
 
-    with log_path.open("a", encoding="utf-8") as log_handle:
+    with log_path.open("w", encoding="utf-8") as log_handle:
         process = subprocess.Popen(
             [
                 sys.executable,
-                "-m",
-                "ccm_orchestra.heartbeat",
+                str(heartbeat_entrypoint_path()),
                 "run",
                 "--interval-seconds",
                 str(interval_seconds),
@@ -183,11 +204,8 @@ def start_background(endpoint: str, interval_seconds: int, message: str, tab_tit
             start_new_session=True,
         )
 
-    time.sleep(1)
-    if not pid_is_alive(process.pid):
-        raise RuntimeError("Heartbeat process exited immediately.")
-
-    print(f"started pid={process.pid} interval_seconds={interval_seconds} tab_title={tab_title} log={log_path}")
+    ready_pid = wait_for_heartbeat_ready(pid_path, startup_pid=process.pid)
+    print(f"started pid={ready_pid} interval_seconds={interval_seconds} tab_title={tab_title} log={log_path}")
     return 0
 
 
