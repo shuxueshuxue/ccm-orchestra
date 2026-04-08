@@ -43,7 +43,7 @@ class SmokeCheckTests(unittest.TestCase):
         self.assertEqual(payload["heartbeat"]["running"], False)
         self.assertEqual(payload["events"][0]["text"], token)
         self.assertEqual(run_cli.call_args_list[0].args[0], ["ccm", "--json", "--cwd", "/work/demo", "doctor"])
-        self.assertEqual(run_cli.call_args_list[1].args[0], ["codex-heartbeat", "status"])
+        self.assertEqual(run_cli.call_args_list[1].args[0], ["ccm", "heartbeat", "status"])
         self.assertEqual(run_cli.call_args_list[2].args[0], ["ccm", "--json", "--cwd", "/work/demo", "start", "smoke-agent"])
         self.assertEqual(run_cli.call_args_list[5].args[0][:6], ["ccm", "--json", "--cwd", "/work/demo", "read", "smoke-agent"])
         self.assertIn("--wait-seconds", run_cli.call_args_list[5].args[0])
@@ -191,7 +191,7 @@ class SmokeCheckTests(unittest.TestCase):
         payload = smoke.heartbeat_status()
 
         self.assertEqual(payload, {"running": False, "raw": "not-running"})
-        self.assertEqual(run_cli.call_args.args[0], ["codex-heartbeat", "status"])
+        self.assertEqual(run_cli.call_args.args[0], ["ccm", "heartbeat", "status"])
         self.assertFalse(run_cli.call_args.kwargs["check"])
 
 

@@ -39,10 +39,10 @@ def parse_json_output(result: subprocess.CompletedProcess[str]) -> Any:
 
 
 def heartbeat_status() -> dict[str, Any]:
-    result = run_cli(["codex-heartbeat", "status"], check=False)
+    result = run_cli(["ccm", "heartbeat", "status"], check=False)
     raw = result.stdout.strip()
     if result.returncode not in {0, 1}:
-        raise RuntimeError(result.stderr.strip() or raw or "codex-heartbeat status failed")
+        raise RuntimeError(result.stderr.strip() or raw or "ccm heartbeat status failed")
     return {"running": result.returncode == 0, "raw": raw}
 
 
